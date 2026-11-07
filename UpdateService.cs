@@ -37,7 +37,7 @@ public static class UpdateService
 
     public const long MaxInstallerBytes = 500L * 1024 * 1024;
     private const string LatestReleaseUrl =
-        "https://api.github.com/repos/jimmybonesde/TILageMonitor/releases/latest";
+        "https://api.github.com/repos/JImmyB0nes/TILageMonitor/releases/latest";
 
     private static readonly HttpClient Client = CreateClient();
     private static readonly HttpClient DownloadClient = CreateDownloadClient();

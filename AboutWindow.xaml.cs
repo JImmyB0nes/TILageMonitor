@@ -16,7 +16,7 @@ public partial class AboutWindow : Window
         OpenUrl("https://fachportal.gematik.de/ti-status#TI-Anschluss");
 
     private void OpenGitHubProject_Click(object sender, RoutedEventArgs e) =>
-        OpenUrl("https://github.com/jimmybonesde/TILageMonitor");
+        OpenUrl("https://github.com/JImmyB0nes/TILageMonitor");
 
     private void OpenHomepage_Click(object sender, RoutedEventArgs e) =>
         OpenUrl("https://www.jimmybones.de");

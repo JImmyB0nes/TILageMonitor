@@ -2,8 +2,8 @@
 
 TI-Lage Monitor wird als Open-Source-Projekt aus diesem öffentlichen Repository veröffentlicht:
 
-- Repository: https://github.com/jimmybonesde/TILageMonitor
-- Releases: https://github.com/jimmybonesde/TILageMonitor/releases
+- Repository: https://github.com/JImmyB0nes/TILageMonitor
+- Releases: https://github.com/JImmyB0nes/TILageMonitor/releases
 - Lizenz: MIT
 
 ## Signatur
@@ -14,9 +14,9 @@ Signiert werden ausschließlich Windows-Installer, die aus dem Quellcode dieses 
 
 ## Rollen
 
-- Committer und Maintainer: Randy Carter (jimmybonesde)
+- Committer und Maintainer: Randy Carter (JImmyB0nes)
 - Reviewer: Änderungen von Dritten werden über GitHub-Pull-Requests geprüft.
-- Approver: Randy Carter (jimmybonesde) gibt veröffentlichte Installer zur Signierung frei.
+- Approver: Randy Carter (JImmyB0nes) gibt veröffentlichte Installer zur Signierung frei.
 
 Für den GitHub-Account und SignPath ist aktivierte Mehrfaktor-Authentifizierung vorgesehen.
 

@@ -10,16 +10,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jimmybonesde/TILageMonitor/releases/latest"><img src="https://img.shields.io/github/v/release/jimmybonesde/TILageMonitor?style=flat&label=Download&logo=github" alt="Latest release"></a>
-  <a href="https://github.com/jimmybonesde/TILageMonitor/releases/latest"><img src="https://img.shields.io/github/downloads/jimmybonesde/TILageMonitor/total?style=flat&label=Downloads" alt="Downloads"></a>
+  <a href="https://github.com/JImmyB0nes/TILageMonitor/releases/latest"><img src="https://img.shields.io/github/v/release/JImmyB0nes/TILageMonitor?style=flat&label=Download&logo=github" alt="Latest release"></a>
+  <a href="https://github.com/JImmyB0nes/TILageMonitor/releases/latest"><img src="https://img.shields.io/github/downloads/JImmyB0nes/TILageMonitor/total?style=flat&label=Downloads" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white" alt="Windows 10 | 11">
   <img src="https://img.shields.io/badge/.NET-10-512BD4?style=flat&logo=dotnet&logoColor=white" alt=".NET 10">
   <img src="https://img.shields.io/badge/Lizenz-MIT-green?style=flat" alt="MIT">
-  <a href="https://github.com/jimmybonesde/TILageMonitor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jimmybonesde/TILageMonitor/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
+  <a href="https://github.com/JImmyB0nes/TILageMonitor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JImmyB0nes/TILageMonitor/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/jimmybonesde/TILageMonitor/releases/latest"><strong>⬇️ Download</strong></a>
+  <a href="https://github.com/JImmyB0nes/TILageMonitor/releases/latest"><strong>⬇️ Download</strong></a>
   ·
   <a href="#-funktionen">Funktionen</a>
   ·
@@ -73,7 +73,7 @@ Lage (tilage **v2**), Incidents (**v1**) und Outages (**v1**) von `ti-lage.prod.
 
 ## 🚀 Schnellstart
 
-1. [Neueste Version herunterladen](https://github.com/jimmybonesde/TILageMonitor/releases/latest) (`TILageMonitor-*-Setup.exe`).
+1. [Neueste Version herunterladen](https://github.com/JImmyB0nes/TILageMonitor/releases/latest) (`TILageMonitor-*-Setup.exe`).
 2. Setup starten und Installation abschließen.
 3. Optional: Autostart, Theme und Sprache unter **Einstellungen**.
 
@@ -152,7 +152,7 @@ Drei Segmente auf derselben Datenbasis: **Übersicht | Stunden | Ereignisse**. v
 **Voraussetzungen:** Windows 10/11 x64 · [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) · PowerShell 5.1+
 
 ```powershell
-git clone https://github.com/jimmybonesde/TILageMonitor.git
+git clone https://github.com/JImmyB0nes/TILageMonitor.git
 cd TILageMonitor
 .\Build.ps1
 .\Install.ps1

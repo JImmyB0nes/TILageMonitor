@@ -56,10 +56,10 @@ public sealed class StatusAndScheduleTests
             GematikRefreshSchedule.GetDelayUntilNextSlot(now));
     }
     [Theory]
-    [InlineData("https://github.com/jimmybonesde/TILageMonitor/releases/tag/v2.0.7", false)]
-    [InlineData("https://github.com/jimmybonesde/TILageMonitor/releases/download/v2.0.7/TILageMonitor-2.0.7-Setup.exe", true)]
+    [InlineData("https://github.com/JImmyB0nes/TILageMonitor/releases/tag/v2.0.7", false)]
+    [InlineData("https://github.com/JImmyB0nes/TILageMonitor/releases/download/v2.0.7/TILageMonitor-2.0.7-Setup.exe", true)]
     [InlineData("https://objects.githubusercontent.com/github-production-release-asset-2e65be/123/TILageMonitor-2.0.7-Setup.exe", true)]
-    [InlineData("http://github.com/jimmybonesde/TILageMonitor/releases/download/v2.0.7/TILageMonitor-2.0.7-Setup.exe", false)]
+    [InlineData("http://github.com/JImmyB0nes/TILageMonitor/releases/download/v2.0.7/TILageMonitor-2.0.7-Setup.exe", false)]
     [InlineData("https://evil.example/TILageMonitor-2.0.7-Setup.exe", false)]
     public void Update_service_accepts_only_direct_setup_assets(string url, bool expected)
     {
@@ -67,7 +67,7 @@ public sealed class StatusAndScheduleTests
     }
 
     [Theory]
-    [InlineData("https://github.com/jimmybonesde/TILageMonitor/releases/download/v2.0.7/checksums.txt", true)]
+    [InlineData("https://github.com/JImmyB0nes/TILageMonitor/releases/download/v2.0.7/checksums.txt", true)]
     [InlineData("https://objects.githubusercontent.com/github-production-release-asset-2e65be/123/checksums.txt", true)]
     [InlineData("https://evil.example/checksums.txt", false)]
     [InlineData("http://github.com/checksums.txt", false)]
