@@ -50,6 +50,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="RefreshButton" Content="↻  Aktualisieren" Click="Refresh_Click" Margin="0,0,8,0" ToolTip="Jetzt aktualisieren"/>
                     <Button x:Name="HistoryButton" Content="📈  Verlauf" Click="History_Click" Margin="0,0,8,0" ToolTip="TI-Status · 14 Tage"/>
+                    <Button x:Name="ConnectorButton" Content="🔌  Konnektor" Click="Connector_Click" Margin="0,0,8,0" ToolTip="Konnektor einrichten und auslesen"/>
                     <Button x:Name="SettingsButton" Content="⚙  Einstellungen" Click="Settings_Click" ToolTip="Einstellungen öffnen"/>
                 </StackPanel>
             </Grid>

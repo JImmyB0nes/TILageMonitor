@@ -47,6 +47,10 @@ public sealed class AppSettings
     [JsonPropertyName("notifyServices")]
     public Dictionary<string, bool> NotifyServices { get; set; } = CreateDefaultNotifyServices();
 
+    /// <summary>Lokale Konnektor-Anbindung (optional).</summary>
+    [JsonPropertyName("connector")]
+    public ConnectorSettings Connector { get; set; } = new();
+
     public static readonly string[] ServiceKeys =
     [
         "erezept", "epa", "kim", "wanda", "ogd", "vsdm", "tianschluss"
@@ -93,6 +97,7 @@ public sealed class AppSettings
 
     public void EnsureNotifyDefaults()
     {
+        Connector ??= new ConnectorSettings();
         NotifyServices ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         foreach (var key in ServiceKeys)
         {

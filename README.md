@@ -118,16 +118,41 @@ Drei Segmente auf derselben Datenbasis: **Übersicht | Stunden | Ereignisse**. v
 | Ereignis / auffällige Stunde | Zoom bzw. Segment **Ereignisse** |
 | Esc / Zurück | Zurück zur Tages-Übersicht |
 
+## 🔌 Konnektor-Anbindung (Vorabversion)
+
+Optional liest die App den **lokalen TI-Konnektor** direkt aus (SOAP-Schnittstellen nach gemSpec_Kon) – erreichbar über **🔌 Konnektor** im Hauptfenster oder im Tray-Menü.
+
+**Einrichtung:** IP-Adresse (optional mit Port), Client-Zertifikat (`.p12`/`.pfx`) samt Passwort sowie Mandant-, Clientsystem- und Arbeitsplatz-ID aus dem Infomodell der Konnektor-Administration. Optional Basic-Auth. Beim ersten Verbinden wird der SHA-256-Fingerprint des Konnektor-TLS-Zertifikats angezeigt und nach Bestätigung gepinnt.
+
+**Ausgelesen wird:**
+
+| Bereich | Quelle | Inhalt |
+| --- | --- | --- |
+| Konnektor | `connector.sds` | Hersteller, Produkt, PTV, Firmware/Hardware, angebotene Dienste + Versionen |
+| Betriebszustand | `EventService.GetResourceInformation` | VPN TI / SIS online/offline, aktive Fehlerzustände (`EC_*`) |
+| Kartenterminals | `EventService.GetCardTerminals` | Name, CtId, IP, MAC, Slots, verbunden ja/nein |
+| Karten | `EventService.GetCards` | SMC-B, HBA, eGK, gSMC-KT: Inhaber, ICCSN, Slot, Steckzeit, Ablaufdatum |
+| PIN-Status | `CardService.GetPinStatus` | verifiziert / Transport-PIN / gesperrt, Restversuche |
+| Zertifikate | `CertificateService.ReadCardCertificate` | C.AUT: Ablauf, Aussteller, **Telematik-ID**, Rolle |
+
+**Aktionen (SMC-B / HBA):** PIN verifizieren (SMC-B freischalten), PIN bzw. Transport-PIN ändern, mit PUK entsperren, Zertifikat online prüfen (OCSP via `VerifyCertificate`). **PIN und PUK werden ausschließlich am Kartenterminal eingegeben** – die App sieht sie nie.
+
+**Hintergrundüberwachung (Toasts):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Kartenterminal getrennt, keine SMC-B gesteckt, SMC-B nicht freigeschaltet, PIN gesperrt/Transport-PIN, Kartenzertifikat läuft ab (Schwelle einstellbar, Standard 60 Tage).
+
+**Diagnose:** „Bericht kopieren“ erzeugt einen Text ohne Passwörter für den Support/DVO.
+
+Zertifikats- und Basic-Auth-Passwörter werden mit Windows-DPAPI (nur aktueller Benutzer) in `settings.json` gespeichert.
+
 ## 🔐 Daten & Datenschutz
 
-- Nur öffentliche gematik-APIs — **kein Login, kein API-Key**
+- Nur öffentliche gematik-APIs — **kein Login, kein API-Key** (Konnektor-Anbindung optional und nur im lokalen Netz)
 - Keine Cloud-Synchronisation
 - Lokal unter `%AppData%\TILageMonitor\`
 - Updates nur von allowlisted GitHub-Hosts (`github.com`, `*.githubusercontent.com`)
 
 | Datei | Inhalt |
 | --- | --- |
-| `settings.json` | Theme, Sprache, Autostart, Notify-Filter, Updates |
+| `settings.json` | Theme, Sprache, Autostart, Notify-Filter, Updates, Konnektor-Zugang (Passwörter DPAPI-verschlüsselt) |
 | `last-lage.json` | Offline-Cache des letzten Stands |
 | `history.json` | Stündliche lokale Ergänzung zum Verlauf |
 

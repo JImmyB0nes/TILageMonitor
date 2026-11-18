@@ -64,8 +64,8 @@ public static class UpdateService
             var downloadUrl = FindSetupDownload(root);
             var checksumUrl = FindChecksumDownload(root);
 
-            if (!Version.TryParse(current, out var currentVersion) ||
-                !Version.TryParse(latest, out var latestVersion))
+            if (!TryParseReleaseVersion(current, out var currentVersion, out var currentIsPrerelease) ||
+                !TryParseReleaseVersion(latest, out var latestVersion, out var latestIsPrerelease))
             {
                 return new UpdateCheckResult(
                     false, false, current, latest, downloadUrl, checksumUrl,
@@ -74,7 +74,7 @@ public static class UpdateService
 
             return new UpdateCheckResult(
                 true,
-                latestVersion > currentVersion,
+                IsNewer(latestVersion, latestIsPrerelease, currentVersion, currentIsPrerelease),
                 current,
                 latest,
                 downloadUrl,
@@ -395,6 +395,32 @@ public static class UpdateService
 
         return null;
     }
+
+    /// <summary>
+    /// Parses "2.1.0" or a pre-release like "2.1.0-beta.1" (numeric part + pre-release flag).
+    /// </summary>
+    public static bool TryParseReleaseVersion(string? value, out Version version, out bool isPrerelease)
+    {
+        version = new Version(0, 0);
+        isPrerelease = false;
+        var normalized = NormalizeVersion(value);
+        if (normalized is null)
+            return false;
+        var dash = normalized.IndexOf('-');
+        isPrerelease = dash >= 0;
+        var numeric = dash >= 0 ? normalized[..dash] : normalized;
+        if (!Version.TryParse(numeric, out var parsed))
+            return false;
+        version = parsed;
+        return true;
+    }
+
+    /// <summary>
+    /// A final release of the same number supersedes a pre-release (2.1.0 &gt; 2.1.0-beta.1).
+    /// GitHub's /releases/latest never returns pre-releases, so stable users are not offered betas.
+    /// </summary>
+    public static bool IsNewer(Version latest, bool latestIsPrerelease, Version current, bool currentIsPrerelease) =>
+        latest > current || (latest == current && currentIsPrerelease && !latestIsPrerelease);
 
     private static string? NormalizeVersion(string? value) =>
         string.IsNullOrWhiteSpace(value)

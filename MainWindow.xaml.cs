@@ -132,6 +132,7 @@ public partial class MainWindow : Window
 
         menu.Items.Add(LocalizationService.Translate("Über TI-Lage Monitor…"), null, (_, _) => ShowAbout());
         menu.Items.Add(LocalizationService.Translate("TI-Status · 14 Tage…"), null, (_, _) => Dispatcher.Invoke(OpenHistoryWindow));
+        menu.Items.Add(LocalizationService.Translate("Konnektor…"), null, (_, _) => Dispatcher.Invoke(OpenConnectorWindow));
         menu.Items.Add(LocalizationService.Translate("Einstellungen…"), null, (_, _) => Dispatcher.Invoke(OpenSettingsWindow));
 
         _autostartMenuItem = new Forms.ToolStripMenuItem(LocalizationService.Translate("Autostart: aus"))
@@ -206,6 +207,9 @@ public partial class MainWindow : Window
         {
             // Verlauf aus lokalem Cache anzeigen (auch vor erstem API-Call)
             RenderHistory(HistoryStore.Load(), null, null);
+
+            // Konnektor-Überwachung unabhängig vom gematik-Abruf starten.
+            InitializeConnector();
 
             await RefreshAsync();
             ScheduleNextRefresh();
@@ -329,6 +333,8 @@ public partial class MainWindow : Window
                 NotifyHistoryUpdated(_lastHistory, _lastIncidents, _lastOutages);
                 _historyWindow.ApplyThemeRefresh();
             }
+
+            _connectorWindow?.ApplyThemeRefresh();
         }
         _settingsWindow?.SyncFrom(_settings);
     }
@@ -337,6 +343,12 @@ public partial class MainWindow : Window
 
     public void HandleToastActivation(string? focusKey)
     {
+        if (string.Equals(focusKey, "konnektor", StringComparison.OrdinalIgnoreCase))
+        {
+            OpenConnectorWindow();
+            return;
+        }
+
         _pendingToastFocusKey = string.IsNullOrWhiteSpace(focusKey) ? null : focusKey;
         ShowWindow();
         Dispatcher.BeginInvoke(
