@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/.NET-10-512BD4?style=flat&logo=dotnet&logoColor=white" alt=".NET 10">
   <img src="https://img.shields.io/badge/Lizenz-MIT-green?style=flat" alt="MIT">
   <a href="https://github.com/JImmyB0nes/TILageMonitor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JImmyB0nes/TILageMonitor/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
+  <a href="https://git.jimmybones.de/jimmybones/TILageMonitor"><img src="https://img.shields.io/badge/Forgejo-Mirror-FB923C?style=flat&logo=forgejo&logoColor=white" alt="Forgejo Mirror"></a>
 </p>
 
 <p align="center">
@@ -28,6 +29,8 @@
   <a href="#-schnellstart">Start</a>
   ·
   <a href="#-für-entwickler">Entwickler</a>
+  ·
+  <a href="https://git.jimmybones.de/jimmybones/TILageMonitor">🪞 Forgejo-Mirror</a>
 </p>
 
 > [!IMPORTANT]
