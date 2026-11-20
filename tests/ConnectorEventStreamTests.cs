@@ -49,7 +49,8 @@ public sealed class ConnectorEventStreamTests
         // Stueck 2: Rest nebst Schluss-Tags.
         pending.Append(Envelope[150..]);
         Assert.True(ConnectorEventStream.TakeMessage(ref pending, out var message));
-        Assert.EndsWith("</Envelope>", message.TrimEnd());
+        // Das Schluss-Tag steht mit Praefix da, nach dem schraegen Strich also nicht der Name.
+        Assert.EndsWith("</soap:Envelope>", message.TrimEnd());
         Assert.Equal("", pending.ToString());
     }
 
