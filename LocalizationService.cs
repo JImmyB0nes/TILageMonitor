@@ -411,13 +411,21 @@ public static class LocalizationService
         // would clear those inlines, so translate only plain TextBlocks.
         if (element is TextBlock textBlock && textBlock.Inlines.Count == 0)
             textBlock.Text = Translate(textBlock.Text);
-        if (element is System.Windows.Controls.Label label) label.Content = Translate(label.Content?.ToString());
-        if (element is System.Windows.Controls.Button button) button.Content = Translate(button.Content?.ToString());
-        if (element is System.Windows.Controls.CheckBox checkBox) checkBox.Content = Translate(checkBox.Content?.ToString());
-        if (element is System.Windows.Controls.RadioButton radioButton) radioButton.Content = Translate(radioButton.Content?.ToString());
-        if (element is HeaderedContentControl headered) headered.Header = Translate(headered.Header?.ToString());
-        if (element is TabItem tab) tab.Header = Translate(tab.Header?.ToString());
-        if (element is System.Windows.Controls.MenuItem menu) menu.Header = Translate(menu.Header?.ToString());
+        // Uebersetzt wird nur, was ein Text ist. Ein Content oder Header, der ein untergeordneter
+        // Teil ist – eine Knopf mit Bild und Text, eine Klappe mit ueberschrift – wird beim
+        // Durchlaufen der Kindkinder ohnehin richtig erwischt. Ihn ueber ToString() zurueckzu-
+        // schreiben, waere schlimmer als nichts tun: aus dem StackPanel wird der String
+        // "System.Windows.Controls.StackPanel", das Bild samt Beschriftung ist damit weg. Genau
+        // das war der Fall, als die Kopfknopfe des Konnektor-Fensters von reiner Beschriftung auf
+        // Vektor-Zeichen mit Text umgestellt wurden. Im Deutschen faellt es nicht auf, dort
+        // fuehrt der fruehen Ausstieg zu keiner Zuweisung.
+        if (element is System.Windows.Controls.Label label && label.Content is string labelText) label.Content = Translate(labelText);
+        if (element is System.Windows.Controls.Button button && button.Content is string buttonContent) button.Content = Translate(buttonContent);
+        if (element is System.Windows.Controls.CheckBox checkBox && checkBox.Content is string checkContent) checkBox.Content = Translate(checkContent);
+        if (element is System.Windows.Controls.RadioButton radioButton && radioButton.Content is string radioContent) radioButton.Content = Translate(radioContent);
+        if (element is HeaderedContentControl headered && headered.Header is string headerText) headered.Header = Translate(headerText);
+        if (element is TabItem tab && tab.Header is string tabHeader) tab.Header = Translate(tabHeader);
+        if (element is System.Windows.Controls.MenuItem menu && menu.Header is string menuHeader) menu.Header = Translate(menuHeader);
         if (element is FrameworkElement fe && fe.ToolTip is string tip) fe.ToolTip = Translate(tip);
 
         foreach (var child in LogicalTreeHelper.GetChildren(element))
