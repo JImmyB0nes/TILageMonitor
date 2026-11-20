@@ -409,7 +409,9 @@ public sealed class ConnectorClient : IDisposable
     {
         // CardService liefert IsContextAvailable, nicht EventService – Namespace aus dem SDS.
         var service = (await GetServiceDirectoryAsync(ct)).Find("CardService") is { } found ? found : null;
-        XNamespace ns = service?.TargetNamespace is { Length: > 0 } target ? target : ConnectorProtocol.DefaultCardServiceNs;
+        XNamespace ns = service?.TargetNamespace is { Length: > 0 } target
+            ? ConnectorProtocol.NormalizeMessageNamespace(target)
+            : ConnectorProtocol.DefaultCardServiceNs;
         var endpoint = service is null
             ? _baseUri
             : ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);
