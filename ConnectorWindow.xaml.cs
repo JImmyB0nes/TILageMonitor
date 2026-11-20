@@ -4,6 +4,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace TILageMonitor;
@@ -29,6 +30,7 @@ public partial class ConnectorWindow : Window
             // wuerde nach dem Schliessen in eine verworfene Maske zeichnen.
             _ownerMain.ConnectorMonitor.Updated -= OnMonitorUpdated;
             try { _cts?.Cancel(); _cts?.Dispose(); _cts = null; } catch { /* ignore */ }
+            _presenceTimer?.Stop();
         };
 
         // Der Reiter ist der tragende Teil, die Seitenleiste bildet ihn ab – auch dann, wenn
@@ -60,6 +62,10 @@ public partial class ConnectorWindow : Window
                 // wo er zuerst etwas tun kann. War frueher dasselbe Verhalten, nur ohne Umweg.
                 Tabs.SelectedItem = ConnectionTab;
             }
+
+            // Der Ticker laeuft nur, solange das Fenster offen ist – im Hintergrund soll er
+            // nichts zeichnen, was niemand sieht.
+            StartPresenceTicker();
         };
 
         // Der Hintergrundpollen war die einzige Quelle, die dieses Fenster nicht erreichte: die
@@ -84,6 +90,8 @@ public partial class ConnectorWindow : Window
             // Nutzers gezeichnet, die gerade erst per 'Test' oder 'Aktualisieren' geholt wurden.
             if (latest is not null && latest.RetrievedAt > (_snapshot?.RetrievedAt ?? DateTime.MinValue))
                 Render(latest);
+            else if (_snapshot is not null)
+                RenderPresence();
         }
 
         if (Dispatcher.CheckAccess())
@@ -93,6 +101,28 @@ public partial class ConnectorWindow : Window
     }
 
     private static string L(string de, string en) => LocalizationService.Pick(de, en);
+
+    /// <summary>
+    /// Haelt die Anwesenheitsangabe frisch. Ohne diesen Tick steht "vor 12 s" auch noch nach
+    /// einer halben Stunde da – und wirkt damit schlechter, als die Anzeige tatsaechtlich ist.
+    /// </summary>
+    private DispatcherTimer? _presenceTimer;
+
+    private void StartPresenceTicker()
+    {
+        _presenceTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(5) };
+        _presenceTimer.Stop();
+        _presenceTimer.Tick -= OnPresenceTick;
+        _presenceTimer.Tick += OnPresenceTick;
+        _presenceTimer.Start();
+    }
+
+    private void OnPresenceTick(object? sender, EventArgs e)
+    {
+        if (!IsVisible || _busy)
+            return;
+        RenderPresence();
+    }
 
     /// <summary>
     /// Seitenleiste und Reiter sind dieselbe Auswahl – der bestehende Code schaltet weiter
@@ -498,7 +528,9 @@ public partial class ConnectorWindow : Window
 
         UpdateNavCounts(snapshot);
         RenderAlerts(alerts, snapshot.Warnings);
+        RenderPresence();
         RenderConnectorInfo(snapshot);
+        RenderSubscriptions(snapshot);
         RenderCards(snapshot);
         RenderTerminals(snapshot);
         RenderServices(snapshot);
@@ -623,6 +655,135 @@ public partial class ConnectorWindow : Window
             panel.Children.Add(more);
         }
         return panel;
+    }
+
+    /// <summary>
+    /// Karte rein/raus. Gezogen wird der Stand der Hintergrundueberwachung, weil der die
+    /// Ereignisse zuerst sieht – die Maske hat nach einem Poll meist noch nichts getan.
+    /// </summary>
+    private void RenderPresence()
+    {
+        var monitor = _ownerMain.ConnectorMonitor;
+        var presence = monitor.LastPresence ?? (_snapshot is not null ? ConnectorPresence.FromSnapshot(_snapshot) : null);
+        if (presence is null)
+        {
+            PresenceCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var now = DateTime.Now;
+        PresenceGlyph.Text = presence.Glyph(now);
+        PresenceGlyph.Foreground = Brush(presence.Inserted ? "StatusOk" : "StatusOutage");
+        PresenceState.Text = presence.StateText;
+        PresenceState.Foreground = Brush(presence.Inserted ? "StatusOk" : "StatusOutage");
+
+        var detail = presence.DetailText;
+        // Ohne Abo ist "Stand 14:32 Uhr" die einzige Erklaerung dafuer, dass die Anzeige
+        // hinterherhinkt. Wer die Herkunft nicht nennt, laesst den Nutzer raten.
+        PresenceDetail.Text = detail.Length > 0 ? detail : L("keine Einzelheit überliefert", "no detail reported");
+        PresenceAge.Text = presence.AgeText(now) + " · " + (presence.ViaEvent
+            ? L("aus Ereignis-Abo", "from event subscription")
+            : L("aus Pollabfrage", "from polling"));
+        PresenceCard.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Was der Konnektor derzeit an diese App meldet. Dieselbe Angabe, die bisher nur im
+    /// Diagnosebericht stand, aber dort liest niemand, wenn es klemmt.
+    /// </summary>
+    private void RenderSubscriptions(ConnectorSnapshot snapshot)
+    {
+        SubscriptionsList.Items.Clear();
+        foreach (var sub in snapshot.Subscriptions)
+        {
+            var panel = new StackPanel { Margin = new Thickness(0, 3, 0, 3) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = sub.Topic,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap
+            });
+            var tail = new List<string> { sub.EventTo };
+            if (sub.TerminationTime is { } until)
+                tail.Add(L("gültig bis", "valid until") + " " + until.ToString("dd.MM.yyyy HH:mm", LocalizationService.DisplayCulture));
+            panel.Children.Add(new TextBlock
+            {
+                Text = string.Join(" · ", tail.Where(t => !string.IsNullOrWhiteSpace(t))),
+                FontSize = 11,
+                Foreground = Brush("TextMuted"),
+                TextWrapping = TextWrapping.Wrap
+            });
+            SubscriptionsList.Items.Add(panel);
+        }
+
+        if (snapshot.Subscriptions.Count > 0)
+        {
+            SubscriptionsEmpty.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // Leer ist keine Fehlmeldung, sondern die Erklaerung. Die Begruendung des Lauschers
+        // gehoert daneben, sonst steht "keine Abos" da wie ein Fehler.
+        SubscriptionsEmpty.Text = _ownerMain.ConnectorMonitor.DescribeEventStream();
+        SubscriptionsEmpty.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Kuendigt alle Abos, die auf diesem Rechner zeigen. Ein Laeufer, der nach
+    /// Fehlversuchen mehrfach steht, blockiert dieselbe Adresse immer wieder neu – und
+    /// uebermaalt damit die Anzeige, die man eigentlich sehen will.
+    /// </summary>
+    private async void Unsubscribe_Click(object sender, RoutedEventArgs e)
+    {
+        if (_snapshot is null || _snapshot.Subscriptions.Count == 0)
+        {
+            ShowWarning(L("Es sind keine Ereignis-Abos eingetragen.", "No event subscriptions are registered."));
+            return;
+        }
+
+        if (System.Windows.MessageBox.Show(this,
+                L("Alle Ereignis-Abos kündigen, die an diese App gehen?\n\nDanach fällt die Anzeige auf reines Pollen zurück, bis erneut abonniert wird.",
+                  "Unsubscribe all event subscriptions pointing at this app?\n\nThe display falls back to plain polling until something is subscribed again."),
+                L("Abos kündigen", "Unsubscribe"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        SetBusy(true, L("Kündige Abos …", "Unsubscribing …"));
+        try
+        {
+            using var client = CreateClient();
+            var failed = 0;
+            foreach (var sub in _snapshot.Subscriptions)
+            {
+                if (string.IsNullOrWhiteSpace(sub.SubscriptionId))
+                    continue;
+                try
+                {
+                    await client.UnsubscribeAsync(sub.SubscriptionId, CancellationToken.None);
+                    Log(L("Abo gekündigt", "subscription cancelled") + ": " + sub.SubscriptionId + " " + sub.Topic);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    Log("✖ " + L("Abo", "subscription") + " " + sub.SubscriptionId + ": " + ex.Message);
+                }
+            }
+
+            if (failed > 0)
+                ShowWarning(L($"{failed} von {_snapshot.Subscriptions.Count} Abos konnten nicht gekündigt werden. Der Konnektor behält sie unter Umständen bis zur Ablaufzeit.",
+                              $"{failed} of {_snapshot.Subscriptions.Count} subscriptions could not be cancelled. The connector may keep them until their termination time."));
+        }
+        catch (Exception ex)
+        {
+            Log("✖ " + ex.Message);
+            ShowWarning(DescribeException(ex));
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+
+        await LoadSnapshotAsync(_ownerMain.GetSettingsSnapshot().Connector, interactive: false);
     }
 
     private void RenderConnectorInfo(ConnectorSnapshot snapshot)
@@ -1068,6 +1229,17 @@ public partial class ConnectorWindow : Window
                 async () => await PinActionAsync(card, pinType, "ChangePin")));
         if (blocked || state?.LeftTries is <= 1)
             buttons.Children.Add(ActionButton(L("Mit PUK entsperren", "Unblock with PUK"), async () => await PinActionAsync(card, pinType, "UnblockPin")));
+
+        // An-/Abschalten ist von den übrigen Knöpfen zu trennen: DisablePin setzt die PIN nicht neu,
+        // sondern nimmt ihre Prüfung ganz. Wer das versehentlich klickt, entsperrt die Karte,
+        // ohne dass überhaupt noch eine PIN-Abfrage kommt.
+        if (!blocked && !transport && state is not null)
+        {
+            if (state.IsDisabled)
+                buttons.Children.Add(ActionButton(L("PIN aktivieren", "Enable PIN"), async () => await PinActionAsync(card, pinType, "EnablePin")));
+            else
+                buttons.Children.Add(ActionButton(L("PIN deaktivieren", "Disable PIN"), async () => await PinActionAsync(card, pinType, "DisablePin")));
+        }
         Grid.SetColumn(buttons, 3);
         row.Children.Add(buttons);
 
@@ -1395,6 +1567,25 @@ public partial class ConnectorWindow : Window
                 prompt = L($"PIN von {card.DisplayName} ({pinType}) ändern.\n\nAm Kartenterminal „{where}“ zuerst die bisherige PIN (bzw. Transport-PIN), dann zweimal die neue PIN eingeben.",
                            $"Change PIN of {card.DisplayName} ({pinType}).\n\nOn card terminal \"{where}\" enter the current PIN (or transport PIN), then the new PIN twice.");
                 break;
+            case "DisablePin":
+                if (System.Windows.MessageBox.Show(this,
+                        L($"{pinType} von {card.DisplayName} deaktivieren?\n\n" +
+                          "⚠ Die PIN wird damit nicht gelöscht, sondern nur nicht mehr abgefragt.\n" +
+                          "Zugriffe auf die Karte laufen anschließend ohne PIN-Abfrage – je nach Anwendung ohne Absicherung.\n\n" +
+                          "Mit „PIN aktivieren“ lässt sich der Zustand zurückholen.",
+                          $"Disable {pinType} of {card.DisplayName}?\n\n" +
+                          "⚠ This does not delete the PIN, it only stops asking for it.\n" +
+                          "Card access then proceeds without a PIN prompt – unprotected, depending on the application.\n\n" +
+                          "Enable PIN restores the previous state."),
+                        L("PIN deaktivieren", "Disable PIN"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                    return;
+                prompt = L($"Bitte nach dem Bestätigen die {pinType} am Kartenterminal „{where}“ eingeben.",
+                           $"After confirming, enter {pinType} on card terminal \"{where}\".");
+                break;
+            case "EnablePin":
+                prompt = L($"{pinType} von {card.DisplayName} wird wieder eingeschaltet.\n\nBitte nach dem Bestätigen die {pinType} am Kartenterminal „{where}“ eingeben.",
+                           $"{pinType} of {card.DisplayName} is switched back on.\n\nAfter confirming, enter {pinType} on card terminal \"{where}\".");
+                break;
             case "UnblockPin":
                 var choice = System.Windows.MessageBox.Show(this,
                     L($"{pinType} von {card.DisplayName} mit der PUK entsperren.\n\n" +
@@ -1639,7 +1830,7 @@ public partial class ConnectorWindow : Window
         }
         try
         {
-            System.Windows.Clipboard.SetText(BuildReport(_snapshot, _ownerMain.GetSettingsSnapshot().Connector));
+            System.Windows.Clipboard.SetText(BuildReport(_snapshot, _ownerMain.GetSettingsSnapshot().Connector, _ownerMain.ConnectorMonitor));
             FooterText.Text = L("Bericht in die Zwischenablage kopiert.", "Report copied to clipboard.");
         }
         catch (Exception ex)
@@ -1648,8 +1839,12 @@ public partial class ConnectorWindow : Window
         }
     }
 
-    /// <summary>Diagnosebericht ohne Geheimnisse (keine Passwörter, kein Zertifikatsinhalt).</summary>
-    public static string BuildReport(ConnectorSnapshot s, ConnectorSettings settings)
+    /// <summary>
+    /// Diagnosebericht ohne Geheimnisse (keine Passwörter, kein Zertifikatsinhalt).
+    /// Der uebergebenen Monitor steht fuer die Ereignisangaben offen, weil der Bericht static
+    /// ist und sich der Stand nicht selbst besorgen darf.
+    /// </summary>
+    public static string BuildReport(ConnectorSnapshot s, ConnectorSettings settings, ConnectorMonitor? monitor = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"TI-Lage Monitor {UpdateService.CurrentVersion} – Konnektor-Bericht {s.RetrievedAt:dd.MM.yyyy HH:mm:ss}");
@@ -1709,6 +1904,21 @@ public partial class ConnectorWindow : Window
             foreach (var sub in s.Subscriptions)
                 sb.AppendLine($"  {sub.SubscriptionId}  {sub.Topic}  ->  {sub.EventTo}");
         }
+        else
+        {
+            sb.AppendLine("Ereignis-Abos: keine – die App pollt im eingestellten Intervall.");
+        }
+
+        // Die Herkunft der Anwesenheitsanzeige gehoert in den Bericht: ob ein Ereignis oder ein
+        // Poll gemeldet hat, entscheidet, warum eine Anzeige hinterherhinkt.
+        if (monitor is not null)
+        {
+            if (monitor.LastPresence is { } presence)
+                sb.AppendLine($"Karte: {(presence.Inserted ? "rein" : "raus")}  ({presence.AgeText(DateTime.Now)}, {(presence.ViaEvent ? "aus Ereignis-Abo" : "aus Pollabfrage")})");
+            if (monitor.LastEvent is { } lastEvent)
+                sb.AppendLine($"Letztes Ereignis: {lastEvent.Summary}  ({lastEvent.ReceivedAt:dd.MM.yyyy HH:mm:ss})");
+            sb.AppendLine("Ereignisstrom: " + monitor.DescribeEventStream());
+        }
         sb.AppendLine("Konfiguration: " + ConnectorConfigurationDiff.DescribeLastChange());
         var history = ConnectorHistoryStore.Load();
         var keys = history.Hours.Select(h => h.HourKey).Distinct(StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
@@ -1731,6 +1941,7 @@ public partial class ConnectorWindow : Window
         RefreshButton.IsEnabled = !busy;
         SaveConnectButton.IsEnabled = !busy;
         TestButton.IsEnabled = !busy;
+        UnsubscribeButton.IsEnabled = !busy;
         // Die Karten- und Terminallisten enthalten die Knopfe, die waehrend eines laufenden
         // Abrufs nichts bringen – doppelte Aufrufe waeren die Folge.
         CardsList.IsEnabled = !busy;

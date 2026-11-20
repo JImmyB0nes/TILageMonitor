@@ -31,6 +31,12 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Die Protokollschicht ist ohne Konnektor pruefbar. Damit die Tests an die internen
+            Zerlegehilfen kommen (TakeMessage, HasOpeningEnvelope), muss der Testversammlung
+            der Zugang offen stehen – ohne dass die App selbst davon etwas merkt. -->
+    <InternalsVisibleTo Include="TILageMonitor.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <Resource Include="TILageMonitor.ico" />
     <Resource Include="docs\assets\app-icon-128.png" />
     <Compile Remove="tests\**\*.cs" />

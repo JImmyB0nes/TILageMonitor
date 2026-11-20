@@ -37,6 +37,18 @@ public sealed class ConnectorMonitor : IDisposable
     /// <summary>Letztes verarbeitete Konnektor-Ereignis (fuer Anzeige und Diagnosebericht).</summary>
     public ConnectorEvent? LastEvent { get; private set; }
 
+    /// <summary>
+    /// Karte rein/raus, moeglichst frueh erkannt. Steht ein Ereignis bereit, fuehrt es die
+    /// Anzeige – andernfalls uebernimmt der letzte Datenstand, damit nie etwas ganz fehlt.
+    /// </summary>
+    public ConnectorPresence? LastPresence { get; private set; }
+
+    /// <summary>
+    /// Letzter Grund fuer die Anwesenheitsanzeige, damit der Nutzer nachvollziehen kann, warum
+    /// der Indikator auf "gerade eben" steht, ohne dass die App eine Karte gesteckt hat.
+    /// </summary>
+    public string PresenceSource { get; private set; } = "";
+
     /// <summary>Bemerkung des Lauschers, z. B. "kein freier Port" – ohne eigenes Ereignis.</summary>
     public string? LastEventNote { get; private set; }
 
@@ -137,6 +149,20 @@ public sealed class ConnectorMonitor : IDisposable
 
             var alerts = ConnectorHealth.Evaluate(snapshot, settings.CertificateWarningDays, DateTime.Now);
             LastAlerts = alerts;
+
+            // Ein Ereignis darf nicht vom naechsten Poll uebermaalt werden, sonst faellt der
+            // Indikator zuruck, obwohl die Karte laengst bekannt ist. Nur der eigene Stand des
+            // Polls ersetzt ihn, wenn kein frisches Ereignis vorliegt.
+            if (ConnectorPresence.FromEvent(LastEvent) is { } fromEvent && (DateTime.Now - fromEvent.At).TotalSeconds <= ConnectorPresence.LiveWindowSeconds)
+            {
+                LastPresence = fromEvent;
+                PresenceSource = L("Konnektor-Ereignis", "connector event");
+            }
+            else
+            {
+                LastPresence = ConnectorPresence.FromSnapshot(snapshot);
+                PresenceSource = L("Pollabfrage", "polling");
+            }
 
             foreach (var alert in alerts.Where(a => !_activeAlertKeys.Contains(a.Key)))
                 Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
@@ -245,6 +271,15 @@ public sealed class ConnectorMonitor : IDisposable
     private void OnEvent(ConnectorEvent evt)
     {
         LastEvent = evt;
+
+        // Karte rein/raus sofort, nicht erst nach dem naechsten Abgleich: wer die Karte zieht,
+        // will das ohne Umweg sehen, waehrend die eigentlichen Einzelheiten nachgezogen werden.
+        if (ConnectorPresence.FromEvent(evt) is { } presence)
+        {
+            LastPresence = presence;
+            PresenceSource = L("Konnektor-Ereignis", "connector event");
+        }
+
         Updated?.Invoke();
 
         // Abo ist aktiv, aber die Anzeige soll trotzdem aktuelle Daten zeigen: sofort nachziehen.

@@ -172,7 +172,7 @@ public sealed class ConnectorEventStream : IDisposable
     /// die Nachricht vollstaendig ist. Ein laufender envelope-Anfang haelt die Innen-Tag
     /// bis zum naechsten Lesedurchgang zurueck.
     /// </summary>
-    private static bool TakeMessage(ref StringBuilder pending, out string message)
+    internal static bool TakeMessage(ref StringBuilder pending, out string message)
     {
         message = "";
         var text = pending.ToString();
@@ -212,7 +212,7 @@ public sealed class ConnectorEventStream : IDisposable
     /// Steht irgendwo ein oeffnendes Envelope-Element? Es kann ein Praefix voranstehen
     /// (<soap:Envelope>, <ns1:Envelope>), deshalb wird beides geprueft.
     /// </summary>
-    private static bool HasOpeningEnvelope(string text)
+    internal static bool HasOpeningEnvelope(string text)
     {
         var at = text.IndexOf("Envelope", StringComparison.OrdinalIgnoreCase);
         while (at > 0)

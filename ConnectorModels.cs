@@ -198,6 +198,7 @@ public sealed class ConnectorPinState
 
     public bool IsVerified => Status.Equals("VERIFIED", StringComparison.OrdinalIgnoreCase);
     public bool IsBlocked => Status.Equals("BLOCKED", StringComparison.OrdinalIgnoreCase);
+    public bool IsDisabled => Status.Equals("DISABLED", StringComparison.OrdinalIgnoreCase);
     public bool IsTransportPin => Status.Equals("TRANSPORT_PIN", StringComparison.OrdinalIgnoreCase) ||
                                   Status.Equals("EMPTY_PIN", StringComparison.OrdinalIgnoreCase);
 }

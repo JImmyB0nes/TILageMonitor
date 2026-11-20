@@ -65,6 +65,16 @@ public static class ConnectorHealth
                         L($"{pin.PinType} ist gesperrt und muss mit der PUK entsperrt werden.", $"{pin.PinType} is blocked and must be unblocked with the PUK."),
                         ToastUrgency.Error));
                 }
+                else if (pin.IsDisabled)
+                {
+                    // Eine deaktivierte PIN ist kein Fehler, aber eine Abweichung von der
+                    // ublichen Absicherung – die sollte anstehen, wenn jemand sie bemerkt.
+                    alerts.Add(new ConnectorAlert(
+                        $"pin-disabled-{id}-{pin.PinType}",
+                        L($"{card.DisplayName}: PIN deaktiviert", $"{card.DisplayName}: PIN disabled"),
+                        L($"{pin.PinType} wird nicht mehr abgefragt. Mit „PIN aktivieren“ laesst sich das rueckgaengig machen.", $"{pin.PinType} is no longer requested. \"Enable PIN\" reverts this."),
+                        ToastUrgency.Warning));
+                }
                 else if (pin.IsTransportPin)
                 {
                     alerts.Add(new ConnectorAlert(

@@ -406,6 +406,27 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Karte rein/raus: eigene Kapsel, weil die Zahl "Karten" im Banner nur
+                             sagt, wie viele stecken, nicht wann sich etwas getan hat. -->
+                        <Border x:Name="PresenceCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="Karte" Style="{StaticResource SectionTitleStyle}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock x:Name="PresenceGlyph" FontSize="18" VerticalAlignment="Center"
+                                               Margin="0,0,10,0"/>
+                                    <StackPanel>
+                                        <TextBlock x:Name="PresenceState" FontSize="14" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="PresenceDetail" FontSize="11"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="PresenceAge" FontSize="11" VerticalAlignment="Center"
+                                               Margin="14,0,0,0" Foreground="{DynamicResource TextMuted}"
+                                               TextWrapping="Wrap" MaxWidth="260"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
                         <Border x:Name="ConnectorInfoCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
                             <StackPanel>
                                 <TextBlock Text="Konnektor" Style="{StaticResource SectionTitleStyle}"/>
@@ -686,6 +707,33 @@
                                         </Grid>
                                         <TextBlock x:Name="EventStreamInfo" Text="" FontSize="11"
                                                    Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Aktive Abos: die einzige Stelle, die zeigt, ob ueberhaupt
+                                     etwas abonniert ist. Steht hier nichts, kommt Karte
+                                     rein/raus erst beim naechsten Poll an – und das ist eine
+                                     Erklaerung, keine Vermutung. -->
+                                <Border Style="{StaticResource PanelStyle}">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="Ereignis-Abos" Style="{StaticResource SectionTitleStyle}" FontSize="14"/>
+                                                <TextBlock Text="Was der Konnektor derzeit an diese App meldet. Leere Liste heißt: es wird nur gepollt."
+                                                           Style="{StaticResource SectionHintStyle}"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" x:Name="UnsubscribeButton" Content="Abos dieser App kuendigen"
+                                                    Padding="13,7" VerticalAlignment="Top" Margin="0,2,0,0"
+                                                    Click="Unsubscribe_Click"
+                                                    ToolTip="Entfernt alle Eintraege, die auf diesem Rechner zeigen. Hilft, wenn derselbe Lauscher nach Fehlversuchen mehrfach steht."/>
+                                        </Grid>
+                                        <ItemsControl x:Name="SubscriptionsList" Margin="0,10,0,0"/>
+                                        <TextBlock x:Name="SubscriptionsEmpty" FontSize="11" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextMuted}" Visibility="Collapsed"/>
                                     </StackPanel>
                                 </Border>
 
