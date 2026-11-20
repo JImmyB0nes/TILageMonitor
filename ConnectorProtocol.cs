@@ -292,6 +292,43 @@ public static class ConnectorProtocol
         string.Equals(ex.Code, "4000", StringComparison.Ordinal) ||
         ex.Message.Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Ueberfuehrt einen TargetNamespace aus connector.sds in den Namespace, der tatsaechlich
+    /// in der Nachricht stehen muss. Manche Konnektoren (u. a. t2connexta) tragen dort den
+    /// Namespace der WSDL-Beschreibung ein (.../EventService/WSDL/v7.2) statt des Nachrichten-
+    /// Namespaces (.../EventService/v7.2). Sendet man den WSDL-Namespace, erkennt der
+    /// Konnektor die Operation nicht und quittiert pauschal mit 4000 "Syntaxfehler".
+    /// </summary>
+    public static string NormalizeMessageNamespace(string targetNamespace)
+    {
+        if (string.IsNullOrWhiteSpace(targetNamespace))
+            return targetNamespace;
+        return targetNamespace.Contains("/WSDL/", StringComparison.Ordinal)
+            ? targetNamespace.Replace("/WSDL/", "/", StringComparison.Ordinal)
+            : targetNamespace;
+    }
+
+    /// <summary>
+    /// Namespace-Varianten, die der Reihe nach ausprobiert werden: erst der aufloeste, dann der
+    /// rohe Wert aus dem Dienstverzeichnis, zuletzt der Fallback. Identische Varianten werden
+    /// verworfen, damit ein Aufruf nicht doppelt laeuft.
+    /// </summary>
+    public static List<string> NamespaceCandidates(string? targetNamespace, string defaultNs)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(targetNamespace))
+        {
+            candidates.Add(NormalizeMessageNamespace(targetNamespace));
+            candidates.Add(targetNamespace!);
+        }
+        candidates.Add(defaultNs);
+        return candidates
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
     // ------------------------------------------------------------------
     // Responses
     // ------------------------------------------------------------------

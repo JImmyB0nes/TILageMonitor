@@ -609,6 +609,37 @@ public sealed class ConnectorHealthTests
         Assert.DoesNotContain("no-smcb", keys);
     }
 
+    [Theory]
+    [InlineData("http://ws.gematik.de/conn/EventService/v7.2", "http://ws.gematik.de/conn/EventService/v7.2")]
+    [InlineData("http://ws.gematik.de/conn/EventService/WSDL/v7.2", "http://ws.gematik.de/conn/EventService/v7.2")]
+    [InlineData("http://ws.gematik.de/conn/CardService/WSDL/v8.1", "http://ws.gematik.de/conn/CardService/v8.1")]
+    [InlineData("http://ws.gematik.de/conn/EventService/WSDL/v7.2.1", "http://ws.gematik.de/conn/EventService/v7.2.1")]
+    public void WSDL_namespace_from_the_service_directory_becomes_the_message_namespace(string fromSds, string expected)
+    {
+        Assert.Equal(expected, ConnectorProtocol.NormalizeMessageNamespace(fromSds));
+    }
+
+    [Fact]
+    public void Namespace_candidates_try_the_resolved_namespace_first_and_never_twice()
+    {
+        var withWsdl = ConnectorProtocol.NamespaceCandidates(
+            "http://ws.gematik.de/conn/EventService/WSDL/v7.2",
+            "http://ws.gematik.de/conn/EventService/v7.2");
+
+        // Der aufloeste Namespace muss zuerst kommen, sonst gewinnt die Variante, die der
+        // Konnektor nachweislich ablehnt. Der Fallback ist identisch, also kein Duplikat.
+        Assert.Equal("http://ws.gematik.de/conn/EventService/v7.2", withWsdl[0]);
+        Assert.Equal(2, withWsdl.Count);
+
+        var plain = ConnectorProtocol.NamespaceCandidates(
+            "http://ws.gematik.de/conn/EventService/v6.1",
+            "http://ws.gematik.de/conn/EventService/v7.2");
+        Assert.Equal(2, plain.Count);
+        Assert.Equal("http://ws.gematik.de/conn/EventService/v6.1", plain[0]);
+
+        Assert.Single(ConnectorProtocol.NamespaceCandidates(null, "http://ws.gematik.de/conn/EventService/v7.2"));
+    }
+
     [Fact]
     public void Connector_history_hours_show_up_in_the_timeline()
     {

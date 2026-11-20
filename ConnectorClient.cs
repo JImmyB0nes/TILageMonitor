@@ -176,49 +176,74 @@ public sealed class ConnectorClient : IDisposable
         var directory = await GetServiceDirectoryAsync(ct);
         var service = directory.Find(serviceName)
                       ?? throw new ConnectorFaultException($"Der Konnektor bietet den Dienst {serviceName} nicht an.");
-        XNamespace ns = string.IsNullOrWhiteSpace(service.TargetNamespace) ? defaultNs : service.TargetNamespace;
         var endpoint = ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);
 
-        var envelope = ConnectorProtocol.Envelope(build(ns));
-        LastRequestXml = envelope;
-        try
-        {
-            return await PostAsync(serviceName, operation, ns, endpoint, envelope, timeout, ct);
-        }
-        catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
-        {
-            // RISE-Konnektoren quittieren unzulässige Eingaben pauschal mit "4000 Syntaxfehler".
-            // Zwei harmlose Varianten, die wir testweise durchspielen, damit der Nutzer nicht
-            // raten muss: Aufruf ohne Benutzer-ID, und (für Karten/Terminals) ohne Mandanten-Radius.
-            _log?.Invoke($"{serviceName}.{operation}: Syntaxfehler – 4000, prüfe Aufrufkontext und Mandanten-Radius");
-            _log?.Invoke($"  gesendeter Request: {ShortenXml(envelope)}");
+        // Der Namespace entscheidet allein über Erfolg oder Misserfolg, und er stammt aus dem
+        // Dienstverzeichnis. Manche Konnektoren tragen dort den Namespace der WSDL-Beschreibung
+        // statt des Nachrichten-Namespace – dann erkennt der Konnektor die Operation nicht und
+        // quittiert jede Operation des Dienstes gleich mit 4000. Deshalb der Reihe nach
+        // durchprobieren, statt bei einem einzelnen Treffer ratend abzubrechen.
+        var candidates = ConnectorProtocol.NamespaceCandidates(service.TargetNamespace, defaultNs);
+        ConnectorFaultException? last = null;
 
-            if (!string.IsNullOrWhiteSpace(_settings.UserId))
+        foreach (var candidate in candidates)
+        {
+            XNamespace ns = candidate;
+            var envelope = ConnectorProtocol.Envelope(build(ns));
+            LastRequestXml = envelope;
+            try
             {
-                var saved = _settings.UserId;
-                _settings.UserId = "";
-                try
-                {
-                    var retried = await PostAsync(serviceName, operation, ns, endpoint,
-                        ConnectorProtocol.Envelope(build(ns)), timeout, ct);
-                    _log?.Invoke($"  Erfolg ohne Benutzer-ID \u201E{saved}\u201C – diese ID akzeptiert der Konnektor nicht");
-                    return retried;
-                }
-                finally
-                {
-                    _settings.UserId = saved;
-                }
+                return await PostAsync(serviceName, operation, ns, endpoint, envelope, timeout, ct);
             }
+            catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
+            {
+                last = ex;
+                _log?.Invoke($"{serviceName}.{operation}: abgelehnt (4000), Namespace {candidate}");
 
-            // Alle drei EventService-Operationen scheitern gleich, wenn der Konnektor eine
-            // ID im Aufrufkontext ablehnt – deshalb beide Werte für den Vergleich mit der
-            // Konnektor-Administration mitliefern.
-            throw new ConnectorFaultException(
-                $"{ex.Message}\nAufrufkontext: Mandant=\u201E{_settings.MandantId}\u201C, Clientsystem=\u201E{_settings.ClientSystemId}\u201C, " +
-                $"Arbeitsplatz=\u201E{_settings.WorkplaceId}\u201C{(string.IsNullOrWhiteSpace(_settings.UserId) ? "" : $", Benutzer=\u201E{_settings.UserId}\u201C")}\n" +
-                "Bitte exakt die Werte aus der Konnektor-Administration verwenden (nur A-Z, a-z, 0-9, - und _).\n" +
-                $"Gesendeter Request: {ShortenXml(envelope)}", ex.Code);
+                if (!string.IsNullOrWhiteSpace(_settings.UserId))
+                {
+                    var saved = _settings.UserId;
+                    _settings.UserId = "";
+                    try
+                    {
+                        var retried = await PostAsync(serviceName, operation, ns, endpoint,
+                            ConnectorProtocol.Envelope(build(ns)), timeout, ct);
+                        _log?.Invoke($"  Erfolg ohne Benutzer-ID \u201E{saved}\u201C – diese ID akzeptiert der Konnektor nicht");
+                        return retried;
+                    }
+                    finally
+                    {
+                        _settings.UserId = saved;
+                    }
+                }
+
+                if (candidates.Count > 1)
+                    _log?.Invoke("  nächster Namespace-Versuch");
+            }
         }
+
+        // Ab hier wird nicht geraten, sondern geprüft: Die IDs lassen sich lokal gegen die
+        // Vorgabe der gemSpec_Kon halten. Sind sie formal sauber, ist der Aufrufkontext als
+        // Ursache unwahrscheinlich und der Namespace bzw. Endpunkt ist der echte Kandidat.
+        var fault = last!;
+        var contextProblems = ConnectorProtocol.ValidateContextIds(_settings);
+        var contextLine = contextProblems is null
+            ? "Aufrufkontext: " +
+              $"Mandant=\u201E{_settings.MandantId}\u201C, Clientsystem=\u201E{_settings.ClientSystemId}\u201C, " +
+              $"Arbeitsplatz=\u201E{_settings.WorkplaceId}\u201C" +
+              (string.IsNullOrWhiteSpace(_settings.UserId) ? "" : $", Benutzer=\u201E{_settings.UserId}\u201C") +
+              " – formal zulässig, deshalb als Ursache eher unwahrscheinlich."
+            : $"Der Aufrufkontext enthält unzulässige Angaben:\n{contextProblems}";
+
+        var rawNs = service.TargetNamespace ?? "";
+        var namespaceLine = rawNs.Contains("/WSDL/", StringComparison.Ordinal)
+            ? $"Der Konnektor liefert im Dienstverzeichnis den Namespace der WSDL-Beschreibung (\u201E{rawNs}\u201C), " +
+              "nicht den der Nachricht. Beide Varianten wurden gesendet und beide abgelehnt."
+            : $"Getestete Namespaces: {string.Join(" oder ", candidates)}";
+
+        throw new ConnectorFaultException(
+            $"{fault.Message}\n{contextLine}\n{namespaceLine}\n" +
+            $"Zuletzt gesendeter Request: {ShortenXml(LastRequestXml)}", fault.Code);
     }
 
     private static string ShortenXml(string xml) =>
