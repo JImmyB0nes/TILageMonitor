@@ -167,16 +167,16 @@
                                 <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" x:Name="ClientCertInfo" Text="" Style="{StaticResource SectionHintStyle}" Margin="0,0,0,10"/>
 
                                 <TextBlock Grid.Row="4" Text="Mandant-ID" Style="{StaticResource FieldLabelStyle}"/>
-                                <TextBox Grid.Row="4" Grid.Column="1" x:Name="MandantBox"/>
+                                <TextBox Grid.Row="4" Grid.Column="1" x:Name="MandantBox" ToolTip="Wie in der Konnektor-Administration hinterlegt. Nur A-Z, a-z, 0-9, - und _, 1–64 Zeichen – Punkte, Leerzeichen oder Umlaute quittieren viele Konnektoren mit 4000 Syntaxfehler"/>
 
                                 <TextBlock Grid.Row="5" Text="Clientsystem-ID" Style="{StaticResource FieldLabelStyle}"/>
-                                <TextBox Grid.Row="5" Grid.Column="1" x:Name="ClientSystemBox"/>
+                                <TextBox Grid.Row="5" Grid.Column="1" x:Name="ClientSystemBox" ToolTip="Wie in der Konnektor-Administration hinterlegt. Nur A-Z, a-z, 0-9, - und _, 1–64 Zeichen"/>
 
                                 <TextBlock Grid.Row="6" Text="Arbeitsplatz-ID" Style="{StaticResource FieldLabelStyle}"/>
-                                <TextBox Grid.Row="6" Grid.Column="1" x:Name="WorkplaceBox"/>
+                                <TextBox Grid.Row="6" Grid.Column="1" x:Name="WorkplaceBox" ToolTip="Wie in der Konnektor-Administration hinterlegt. Nur A-Z, a-z, 0-9, - und _, 1–64 Zeichen"/>
 
                                 <TextBlock Grid.Row="7" Text="Benutzer-ID (optional)" Style="{StaticResource FieldLabelStyle}"/>
-                                <TextBox Grid.Row="7" Grid.Column="1" x:Name="UserBox" ToolTip="Nur nötig für HBA-Operationen, wenn der Konnektor eine UserId verlangt"/>
+                                <TextBox Grid.Row="7" Grid.Column="1" x:Name="UserBox" ToolTip="Leer lassen, außer HBA-Operationen erfordern sie. Eine ungültige UserId (Punkt, Leerzeichen) lässt beim RISE-Konnektor alle Abfragen mit 4000 Syntaxfehler scheitern"/>
                             </Grid>
 
                             <Expander Margin="0,6,0,0">

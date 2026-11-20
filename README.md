@@ -144,6 +144,8 @@ Optional liest die App den **lokalen TI-Konnektor** direkt aus (SOAP-Schnittstel
 
 **Diagnose:** „Bericht kopieren“ erzeugt einen Text ohne Passwörter für den Support/DVO.
 
+**Falls Karten und Terminals leer bleiben (`4000: Syntaxfehler`):** dieser Fehler kommt fast nie vom Request-Aufbau, sondern vom **Aufrufkontext**. Konnektoren (besonders RISE) akzeptieren für Mandant-, Clientsystem- und Arbeitsplatz-ID ausschließlich `A-Z`, `a-z`, `0-9`, `-` und `_` (1–64 Zeichen) – Punkte, Leerzeichen, Tabulatoren, Umlaute oder zu viele Zeichen quittieren sie pauschal mit 4000, und dann schlägt gleich die gesamte EventService-Abfrage fehl. Die App prüft die IDs deshalb beim Speichern, wiederholt automatisch testweise ohne Benutzer-ID bzw. ohne Mandanten-Radius und gibt im Log den tatsächlich gesendeten Request aus.
+
 Zertifikats- und Basic-Auth-Passwörter werden mit Windows-DPAPI (nur aktueller Benutzer) in `settings.json` gespeichert.
 
 ## 🔐 Daten & Datenschutz

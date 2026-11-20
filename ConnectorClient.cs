@@ -36,6 +36,10 @@ public sealed class ConnectorClient : IDisposable
     public DateTime? LastServerNotAfter { get; private set; }
     private bool _lastServerRejected;
 
+    /// <summary>Zuletzt gesendeter XML-Rumpf – nur für Diagnoseberichte und Log interessant.</summary>
+    public string LastRequestXml { get; private set; } = "";
+    public string LastResponseXml { get; private set; } = "";
+
     public ConnectorClient(ConnectorSettings settings, Action<string>? log = null)
     {
         _settings = settings.Clone();
@@ -176,14 +180,60 @@ public sealed class ConnectorClient : IDisposable
         var endpoint = ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);
 
         var envelope = ConnectorProtocol.Envelope(build(ns));
+        LastRequestXml = envelope;
+        try
+        {
+            return await PostAsync(serviceName, operation, ns, endpoint, envelope, timeout, ct);
+        }
+        catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
+        {
+            // RISE-Konnektoren quittieren unzulässige Eingaben pauschal mit "4000 Syntaxfehler".
+            // Zwei harmlose Varianten, die wir testweise durchspielen, damit der Nutzer nicht
+            // raten muss: Aufruf ohne Benutzer-ID, und (für Karten/Terminals) ohne Mandanten-Radius.
+            _log?.Invoke($"{serviceName}.{operation}: Syntaxfehler – 4000, prüfe Aufrufkontext und Mandanten-Radius");
+            _log?.Invoke($"  gesendeter Request: {ShortenXml(envelope)}");
+
+            if (!string.IsNullOrWhiteSpace(_settings.UserId))
+            {
+                var saved = _settings.UserId;
+                _settings.UserId = "";
+                try
+                {
+                    var retried = await PostAsync(serviceName, operation, ns, endpoint,
+                        ConnectorProtocol.Envelope(build(ns)), timeout, ct);
+                    _log?.Invoke($"  Erfolg ohne Benutzer-ID \u201E{saved}\u201C – diese ID akzeptiert der Konnektor nicht");
+                    return retried;
+                }
+                finally
+                {
+                    _settings.UserId = saved;
+                }
+            }
+
+            // Alle drei EventService-Operationen scheitern gleich, wenn der Konnektor eine
+            // ID im Aufrufkontext ablehnt – deshalb beide Werte für den Vergleich mit der
+            // Konnektor-Administration mitliefern.
+            throw new ConnectorFaultException(
+                $"{ex.Message}\nAufrufkontext: Mandant=\u201E{_settings.MandantId}\u201C, Clientsystem=\u201E{_settings.ClientSystemId}\u201C, " +
+                $"Arbeitsplatz=\u201E{_settings.WorkplaceId}\u201C{(string.IsNullOrWhiteSpace(_settings.UserId) ? "" : $", Benutzer=\u201E{_settings.UserId}\u201C")}\n" +
+                "Bitte exakt die Werte aus der Konnektor-Administration verwenden (nur A-Z, a-z, 0-9, - und _).\n" +
+                $"Gesendeter Request: {ShortenXml(envelope)}", ex.Code);
+        }
+    }
+
+    private static string ShortenXml(string xml) =>
+        xml.Length <= 900 ? xml : xml[..900] + " …";
+
+    private async Task<XElement> PostAsync(string serviceName, string operation, XNamespace serviceNs, Uri endpoint, string envelope, TimeSpan? timeout, CancellationToken ct)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(envelope, Encoding.UTF8, "text/xml")
         };
-        request.Headers.TryAddWithoutValidation("SOAPAction", $"\"{ConnectorProtocol.SoapAction(ns, operation)}\"");
-
+        request.Headers.TryAddWithoutValidation("SOAPAction", $"\"{ConnectorProtocol.SoapAction(serviceNs, operation)}\"");
         _log?.Invoke($"{serviceName}.{operation}");
         var body = await SendAsync(request, timeout ?? DefaultTimeout, ct);
+        LastResponseXml = body;
         return ConnectorProtocol.ParseBody(body);
     }
 
@@ -210,13 +260,37 @@ public sealed class ConnectorClient : IDisposable
         return _directory;
     }
 
-    public async Task<List<ConnectorCard>> GetCardsAsync(CancellationToken ct) =>
-        ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
-            ns => ConnectorProtocol.GetCards(ns, _settings), "GetCards", null, ct));
+    public async Task<List<ConnectorCard>> GetCardsAsync(CancellationToken ct)
+    {
+        try
+        {
+            return ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+                ns => ConnectorProtocol.GetCards(ns, _settings), "GetCards", null, ct));
+        }
+        catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
+        {
+            // "mandant-wide=true" ist nach gemSpec_Kon zulässig, wird aber von mannger Firmware
+            // nicht angenommen. Zweiter Versuch nur für das eingestellte Mandantenpaar.
+            _log?.Invoke("Karten: zweiter Versuch ohne Mandanten-Radius (mandant-wide=false)");
+            return ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+                ns => ConnectorProtocol.GetCards(ns, _settings, mandantWide: false), "GetCards", null, ct));
+        }
+    }
 
-    public async Task<List<ConnectorCardTerminal>> GetCardTerminalsAsync(CancellationToken ct) =>
-        ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
-            ns => ConnectorProtocol.GetCardTerminals(ns, _settings), "GetCardTerminals", null, ct));
+    public async Task<List<ConnectorCardTerminal>> GetCardTerminalsAsync(CancellationToken ct)
+    {
+        try
+        {
+            return ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+                ns => ConnectorProtocol.GetCardTerminals(ns, _settings), "GetCardTerminals", null, ct));
+        }
+        catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
+        {
+            _log?.Invoke("Kartenterminals: zweiter Versuch ohne Mandanten-Radius (mandant-wide=false)");
+            return ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+                ns => ConnectorProtocol.GetCardTerminals(ns, _settings, mandantWide: false), "GetCardTerminals", null, ct));
+        }
+    }
 
     public async Task<ConnectorResourceInfo> GetResourceInformationAsync(CancellationToken ct) =>
         ConnectorProtocol.ParseResourceInformation(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,

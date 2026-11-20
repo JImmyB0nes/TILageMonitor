@@ -117,6 +117,11 @@ public partial class ConnectorWindow : Window
         if (string.IsNullOrWhiteSpace(s.MandantId) || string.IsNullOrWhiteSpace(s.ClientSystemId) || string.IsNullOrWhiteSpace(s.WorkplaceId))
             return L("Mandant-ID, Clientsystem-ID und Arbeitsplatz-ID sind Pflichtfelder (Aufrufkontext).",
                      "Tenant ID, client system ID and workplace ID are required (call context).");
+        // Konnektoren (v. a. RISE) quittieren unzulässige IDs mit "4000 Syntaxfehler" – vorher prüfen.
+        var contextProblems = ConnectorProtocol.ValidateContextIds(s);
+        if (contextProblems is not null)
+            return L("Die IDs im Aufrufkontext lehnt der Konnektor höchstwahrscheinlich ab:\n\n" + contextProblems,
+                     "The connector most likely rejects these call-context IDs:\n\n" + contextProblems);
         if (!string.IsNullOrWhiteSpace(s.ClientCertificatePath) && !File.Exists(s.ClientCertificatePath))
             return L($"Die Zertifikatsdatei wurde nicht gefunden:\n{s.ClientCertificatePath}", $"Certificate file not found:\n{s.ClientCertificatePath}");
         return null;
@@ -911,6 +916,11 @@ public partial class ConnectorWindow : Window
             sb.AppendLine("Teilfehler:");
             foreach (var w in s.Warnings)
                 sb.AppendLine("  " + w);
+            if (s.Warnings.Any(w => w.Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase)))
+                sb.AppendLine("  Hinweis: 4000 Syntaxfehler bedeutet meist, dass der Konnektor eine ID im " +
+                              "Aufrufkontext ablehnt. Erlaubt sind A-Z, a-z, 0-9, - und _ (1–64 Zeichen);" +
+                              " Punkte, Leerzeichen oder zu viele Zeichen führen zu genau dieser Meldung. " +
+                              "Ein etwaig eingetragener Benutzer-ID bitte leer lassen, wenn nicht für HBA-Operationen benötigt.");
         }
         foreach (var a in ConnectorHealth.Evaluate(s, settings.CertificateWarningDays, DateTime.Now))
             sb.AppendLine($"Hinweis [{a.Urgency}]: {a.Title} – {a.Body}");

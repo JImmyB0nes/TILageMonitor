@@ -129,11 +129,11 @@ public static class ConnectorProtocol
             new XElement(Soap + "Header"),
             new XElement(Soap + "Body", body)).ToString(SaveOptions.DisableFormatting);
 
-    public static XElement GetCards(XNamespace evt, ConnectorSettings s) =>
-        new(evt + "GetCards", new XAttribute("mandant-wide", "true"), Context(s));
+    public static XElement GetCards(XNamespace evt, ConnectorSettings s, bool mandantWide = true) =>
+        new(evt + "GetCards", new XAttribute("mandant-wide", mandantWide ? "true" : "false"), Context(s));
 
-    public static XElement GetCardTerminals(XNamespace evt, ConnectorSettings s) =>
-        new(evt + "GetCardTerminals", new XAttribute("mandant-wide", "true"), Context(s));
+    public static XElement GetCardTerminals(XNamespace evt, ConnectorSettings s, bool mandantWide = true) =>
+        new(evt + "GetCardTerminals", new XAttribute("mandant-wide", mandantWide ? "true" : "false"), Context(s));
 
     public static XElement GetResourceInformation(XNamespace evt, ConnectorSettings s) =>
         new(evt + "GetResourceInformation", Context(s));
@@ -166,6 +166,58 @@ public static class ConnectorProtocol
 
     public static string SoapAction(XNamespace serviceNs, string operation) =>
         $"{serviceNs.NamespaceName}#{operation}";
+
+    /// <summary>
+    /// Prüft die IDs des Aufrufkontexts auf die von Konnektoren erlaubten Zeichen.
+    /// Vor allem RISE-Konnektoren quittieren Abweichungen (Punkt, Leerzeichen, Umlaute,
+    /// zu lange Werte) mit SOAP-Fehler 4000 "Syntaxfehler" – ohne dass der eigentliche
+    /// Grund irgendwo nachvollziehbar wäre. Der Aufrufrumpf ist sonst korrekt.
+    /// </summary>
+    public static string? ValidateContextIds(ConnectorSettings s)
+    {
+        var problems = new List<string>();
+        CheckId("Mandant-ID", s.MandantId, problems);
+        CheckId("Clientsystem-ID", s.ClientSystemId, problems);
+        CheckId("Arbeitsplatz-ID", s.WorkplaceId, problems);
+        if (!string.IsNullOrWhiteSpace(s.UserId))
+            CheckId("Benutzer-ID", s.UserId, problems);
+        return problems.Count == 0 ? null : string.Join(Environment.NewLine, problems);
+    }
+
+    private static void CheckId(string label, string value, List<string> problems)
+    {
+        value ??= "";
+        if (value.Length == 0)
+        {
+            problems.Add($"{label}: leer gelassen – mindestens 1 Zeichen erforderlich.");
+            return;
+        }
+        if (value.Length > 64)
+        {
+            problems.Add($"{label}: {value.Length} Zeichen – erlaubt sind maximal 64.");
+            return;
+        }
+        var invalid = value.Where(c => !char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_')).Distinct().ToList();
+        if (invalid.Count == 0)
+            return;
+        problems.Add(
+            $"{label} \u201E{value}\u201C enthält verbotene Zeichen: {string.Join(" ", invalid.Select(DescribeChar))}.\n" +
+            "Erlaubt sind A-Z, a-z, 0-9, Bindestrich und Unterstrich (1–64 Zeichen),\n" +
+            "so wie die IDs in der Konnektor-Administration hinterlegt sind.");
+    }
+
+    private static string DescribeChar(char c) => c switch
+    {
+        ' ' => "\u201ELeerzeichen\u201C",
+        '\t' => "\u201ETabulator\u201C",
+        '.' => "\u201EPunkt\u201C",
+        _ => $"\u201E{c}\u201C"
+    };
+
+    /// <summary>Fehlercode 4000 (bzw. die Meldung "Syntaxfehler") deutet auf eine abgelehnte Eingabe hin.</summary>
+    public static bool IsSyntaxError(ConnectorFaultException ex) =>
+        string.Equals(ex.Code, "4000", StringComparison.Ordinal) ||
+        ex.Message.Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase);
 
     // ------------------------------------------------------------------
     // Responses
@@ -213,6 +265,10 @@ public static class ConnectorProtocol
         message.Append(!string.IsNullOrWhiteSpace(text) ? text : !string.IsNullOrWhiteSpace(faultString) ? faultString : "Unbekannter Konnektor-Fehler");
         if (!string.IsNullOrWhiteSpace(detail) && detail != text)
             message.Append(" (").Append(detail).Append(')');
+
+        if (string.Equals(code, "4000", StringComparison.Ordinal) || message.ToString().Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase))
+            message.Append(" – Der Konnektor hat die Eingabe abgelehnt. Ursache ist fast immer eine ID im Aufrufkontext, " +
+                           "die er so nicht akzeptiert (nur A-Z, a-z, 0-9, - und _, 1–64 Zeichen, kein Punkt, kein Leerzeichen).");
 
         return new ConnectorFaultException(message.ToString(), string.IsNullOrWhiteSpace(code) ? null : code);
     }

@@ -121,6 +121,41 @@ public sealed class ConnectorProtocolTests
         Assert.Null(ctx.Element(ConnectorProtocol.Conn + "UserId"));
     }
 
+    [Theory]
+    [InlineData("Mandant1", "CS1", "AP1", null)]                       // unaufällig
+    [InlineData("Mandant-1", "CS_1", "AP1", null)]                      // Bindestrich/Unterstrich erlaubt
+    [InlineData("mandant.1", "CS1", "AP1", "Mandant-ID")]               // Punkt => 4000 Syntaxfehler
+    [InlineData("Mandant 1", "CS1", "AP1", "Leerzeichen")]
+    [InlineData("Mandant1", "CS1", "AP1	", "Tabulator")]
+    [InlineData("Mandant1", "CS1", "AP1.", "Arbeitsplatz-ID")]
+    [InlineData("aMandant1", "CS1", "AP1", null)]
+    [InlineData("Mandant1", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "AP1", "maximal 64")]
+    public void ValidateContextIds_flags_ids_a_connector_would_reject(string mandant, string client, string workplace, string? expectedFragment)
+    {
+        var s = Settings();
+        s.MandantId = mandant;
+        s.ClientSystemId = client;
+        s.WorkplaceId = workplace;
+
+        var result = ConnectorProtocol.ValidateContextIds(s);
+
+        if (expectedFragment is null)
+            Assert.Null(result);
+        else
+        {
+            Assert.NotNull(result);
+            Assert.Contains(expectedFragment, result);
+        }
+    }
+
+    [Fact]
+    public void GetCards_can_be_requested_without_mandant_wide_attribute_value_true()
+    {
+        XNamespace evt = "http://ws.gematik.de/conn/EventService/v7.2";
+        var element = ConnectorProtocol.GetCards(evt, Settings(), mandantWide: false);
+        Assert.Equal("false", (string?)element.Attribute("mandant-wide"));
+    }
+
     [Fact]
     public void ReadCardCertificate_puts_card_handle_before_context()
     {
