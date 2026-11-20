@@ -47,7 +47,12 @@ public partial class ConnectorWindow : Window
             if (settings.Enabled && settings.IsConfigured)
             {
                 ConnectionExpander.IsExpanded = false;
-                await LoadSnapshotAsync(settings, interactive: false);
+                // Ein Scheitern fuehrt hier zu denselben Einstellungen wie der Knopf – nur ohne
+                // Dialog. Auf der Uebersicht steht dann nichts, und der Nutzer muss den Umweg
+                // erst finden. Steht aus dem Hintergrundpollen schon ein Stand, bleibt die
+                // Uebersicht dagegen stehen: der ist ja nicht falsch, nur aelter.
+                if (!await LoadSnapshotAsync(settings, interactive: false) && _snapshot is null)
+                    Tabs.SelectedItem = ConnectionTab;
             }
             else
             {
