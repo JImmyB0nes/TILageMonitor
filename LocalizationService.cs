@@ -36,6 +36,9 @@ public static class LocalizationService
         };
     }
 
+    /// <summary>Inline-Übersetzung für dynamische Texte (z. B. Konnektor-Meldungen mit Werten).</summary>
+    public static string Pick(string german, string english) => IsGerman ? german : english;
+
     public static bool IsGermanCulture(CultureInfo? culture) =>
         string.Equals((culture ?? CultureInfo.CurrentUICulture).TwoLetterISOLanguageName, "de", StringComparison.OrdinalIgnoreCase);
 
@@ -278,6 +281,55 @@ public static class LocalizationService
         ["Stundenkacheln mit Daten"] = "hour tiles with data",
         ["In den letzten 14 Tagen blieb {0} ohne Einschränkung oder Störung — ein ruhiges Bild."] = "Over the last 14 days, {0} had no restriction or outage — a quiet picture.",
         ["Störung ·"] = "Outage ·",
+        ["Konnektor…"] = "Connector…",
+        ["Konnektor"] = "Connector",
+        ["🔌  Konnektor"] = "🔌  Connector",
+        ["Konnektor einrichten und auslesen"] = "Set up and read connector",
+        ["Lokale TI-Anbindung: Konnektor-Status, Kartenterminals, Karten, PIN-Verwaltung und Zertifikate"] = "Local TI connection: connector status, card terminals, cards, PIN management and certificates",
+        ["📋  Bericht kopieren"] = "📋  Copy report",
+        ["Diagnosebericht in die Zwischenablage kopieren"] = "Copy diagnostic report to clipboard",
+        ["Noch nicht verbunden"] = "Not connected yet",
+        ["Zugangsdaten eintragen und „Speichern & verbinden“ wählen."] = "Enter the credentials and choose “Save & connect”.",
+        ["Hinweise"] = "Notices",
+        ["Werte aus der Konnektor-Administration (Infomodell: Mandant, Clientsystem, Arbeitsplatz). Das Client-Zertifikat (.p12) wird im Konnektor für dieses Clientsystem erzeugt bzw. hinterlegt."] = "Values from the connector administration (info model: tenant, client system, workplace). The client certificate (.p12) is created or registered in the connector for this client system.",
+        ["Konnektor-Adresse"] = "Connector address",
+        ["IP-Adresse oder Hostname, optional mit Port, z. B. 192.168.1.10 oder 10.0.0.5:8443"] = "IP address or host name, optionally with port, e.g. 192.168.1.10 or 10.0.0.5:8443",
+        ["TLS (https)"] = "TLS (https)",
+        ["Client-Zertifikat (.p12)"] = "Client certificate (.p12)",
+        ["Durchsuchen…"] = "Browse…",
+        ["Zertifikats-Passwort"] = "Certificate password",
+        ["Leer lassen, um das gespeicherte Passwort zu behalten"] = "Leave empty to keep the saved password",
+        ["Mandant-ID"] = "Tenant ID (MandantId)",
+        ["Clientsystem-ID"] = "Client system ID",
+        ["Arbeitsplatz-ID"] = "Workplace ID",
+        ["Benutzer-ID (optional)"] = "User ID (optional)",
+        ["Nur nötig für HBA-Operationen, wenn der Konnektor eine UserId verlangt"] = "Only needed for HBA operations if the connector requires a UserId",
+        ["Erweitert"] = "Advanced",
+        ["Basic-Auth Benutzer"] = "Basic auth user",
+        ["Basic-Auth Passwort"] = "Basic auth password",
+        ["Nur ausfüllen, wenn der Konnektor Benutzer/Passwort statt (oder zusätzlich zum) Zertifikat verlangt"] = "Only fill in if the connector requires user/password instead of (or in addition to) the certificate",
+        ["Dienst-Endpunkte auf diese Adresse umleiten (empfohlen)"] = "Redirect service endpoints to this address (recommended)",
+        ["connector.sds enthält oft interne Hostnamen, die vom Arbeitsplatz nicht auflösbar sind"] = "connector.sds often contains internal host names that cannot be resolved from the workstation",
+        ["Konnektor-TLS-Zertifikat"] = "Connector TLS certificate",
+        ["nicht gepinnt"] = "not pinned",
+        ["Vertrauen zurücksetzen"] = "Reset trust",
+        ["Konnektor-Anbindung aktiv"] = "Connector integration enabled",
+        ["Im Hintergrund überwachen (Toasts)"] = "Monitor in background (toasts)",
+        ["Ereignis-Abos (Karte rein/raus sofort, statt nur Pollen)"] = "Event subscriptions (card inserted/removed instantly, instead of polling only)",
+        ["Konnektor-Verlauf lokal speichern (14 Tage)"] = "Store connector history locally (14 days)",
+        ["Die App lauscht auf einem lokalen TCP-Port. Schlägt das Abo fehl, wird automatisch weiter gepollt."] = "The app listens on a local TCP port. If the subscription fails, polling continues automatically.",
+        ["Für Timeline und Stördauer – auch dann, wenn die gematik-API nicht erreichbar ist"] = "For timeline and outage duration – even when the gematik API is unreachable",
+        ["Intervall (Minuten)"] = "Interval (minutes)",
+        ["Zertifikatswarnung ab (Tage)"] = "Certificate warning from (days)",
+        ["Speichern & verbinden"] = "Save & connect",
+        ["Nur testen"] = "Test only",
+        ["Produktinformationen (connector.sds) und Betriebszustand (GetResourceInformation)"] = "Product information (connector.sds) and operating state (GetResourceInformation)",
+        ["Karten"] = "Cards",
+        ["SMC-B und HBA: PIN-Eingaben erfolgen ausschließlich am Kartenterminal – die App sieht keine PIN oder PUK."] = "SMC-B and HBA: PINs are entered exclusively on the card terminal – the app never sees a PIN or PUK.",
+        ["Kartenterminals"] = "Card terminals",
+        ["Dienstverzeichnis (connector.sds)"] = "Service directory (connector.sds)",
+        ["Protokoll"] = "Log",
+        ["• Konnektor-Anbindung: Status, Karten, PIN-Verwaltung"] = "• Connector integration: status, cards, PIN management",
         ["Einschränkung ·"] = "Restriction ·"
     };
 

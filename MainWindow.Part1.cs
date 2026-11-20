@@ -164,6 +164,7 @@ public partial class MainWindow
         try { _refreshCts?.Dispose(); } catch { /* ignore */ }
         _refreshCts = null;
         StopShowWindowListener();
+        DisposeConnector();
 
         try
         {

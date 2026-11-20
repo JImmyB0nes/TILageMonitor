@@ -47,6 +47,10 @@ public sealed class AppSettings
     [JsonPropertyName("notifyServices")]
     public Dictionary<string, bool> NotifyServices { get; set; } = CreateDefaultNotifyServices();
 
+    /// <summary>Lokale Konnektor-Anbindung (optional).</summary>
+    [JsonPropertyName("connector")]
+    public ConnectorSettings Connector { get; set; } = new();
+
     public static readonly string[] ServiceKeys =
     [
         "erezept", "epa", "kim", "wanda", "ogd", "vsdm", "tianschluss"
@@ -61,7 +65,10 @@ public sealed class AppSettings
             ["wanda"] = "WANDA",
             ["ogd"] = "OGD",
             ["vsdm"] = "VSDM",
-            ["tianschluss"] = "TI-Anschluss"
+            ["tianschluss"] = "TI-Anschluss",
+            // Eigener Key fuer den lokalen Konnektor-Verlauf. Der laeuft nicht ueber die
+            // gematik-API, sondern ausschliesslich ueber den Konnektor selbst.
+            ["konnektor"] = "Konnektor"
         };
 
     public static Dictionary<string, bool> CreateDefaultNotifyServices()
@@ -93,6 +100,7 @@ public sealed class AppSettings
 
     public void EnsureNotifyDefaults()
     {
+        Connector ??= new ConnectorSettings();
         NotifyServices ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         foreach (var key in ServiceKeys)
         {

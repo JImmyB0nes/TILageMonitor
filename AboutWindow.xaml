@@ -106,6 +106,7 @@
                 <TextBlock Style="{StaticResource BulletStyle}" Text="• Windows-Toasts bei Störungen und Statuswechseln"/>
                 <TextBlock Style="{StaticResource BulletStyle}" Text="• 14-Tage-Verlauf mit Tages-Kacheln und Ereignisse-Timeline"/>
                 <TextBlock Style="{StaticResource BulletStyle}" Text="• Offline-Cache bei API-Ausfall"/>
+                <TextBlock Style="{StaticResource BulletStyle}" Text="• Konnektor-Anbindung: Status, Karten, PIN-Verwaltung"/>
                 <TextBlock Style="{StaticResource BulletStyle}" Text="• Autostart, Dunkelmodus, Benachrichtigungsfilter"/>
             </StackPanel>
         </Border>

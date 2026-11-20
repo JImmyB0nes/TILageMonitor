@@ -2,6 +2,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
 #endif
+#ifndef MyAppNumericVersion
+  #define MyAppNumericVersion "0.0.0"
+#endif
 #define MyAppPublisher "Randy Carter"
 #define MyAppExeName "TILageMonitor.exe"
 
@@ -9,6 +12,7 @@
 AppId={{E4AD0D98-5234-4C68-9F51-0EC336792B37}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppNumericVersion}.0
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\TILageMonitor
 DefaultGroupName={#MyAppName}

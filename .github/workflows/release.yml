@@ -28,11 +28,15 @@ jobs:
           } else {
             "${{ github.ref_name }}"
           }
-          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
-            throw "Version muss dem Format vMAJOR.MINOR.PATCH entsprechen."
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)(-[0-9A-Za-z.]+)?$') {
+            throw "Version muss dem Format vMAJOR.MINOR.PATCH oder vMAJOR.MINOR.PATCH-suffix (Vorabversion) entsprechen."
           }
+          $numeric = $Matches[1]
+          $prerelease = if ($Matches[2]) { "true" } else { "false" }
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "number=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+          "numeric=$numeric" >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
 
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
         with:
@@ -53,8 +57,8 @@ jobs:
             -p:EnableCompressionInSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:Version=$version `
-            -p:FileVersion="$version.0" `
-            -p:AssemblyVersion="$version.0" `
+            -p:FileVersion="${{ steps.version.outputs.numeric }}.0" `
+            -p:AssemblyVersion="${{ steps.version.outputs.numeric }}.0" `
             -p:InformationalVersion=$version `
             -o publish
 
@@ -63,7 +67,7 @@ jobs:
         run: |
           choco install innosetup --no-progress --yes
           $version = "${{ steps.version.outputs.number }}"
-          & "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe" "/DMyAppVersion=$version" installer/TILageMonitor.iss
+          & "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe" "/DMyAppVersion=$version" "/DMyAppNumericVersion=${{ steps.version.outputs.numeric }}" installer/TILageMonitor.iss
 
       - name: Sign installer when certificate secrets are configured
         shell: pwsh
@@ -131,6 +135,8 @@ jobs:
 
             Enthält den Windows-Installer und eine SHA-256-Prüfsumme.
 
+            ${{ steps.version.outputs.prerelease == 'true' && '> ⚠️ **Testversion (Vorabversion)** – wird nicht automatisch an stabile Installationen verteilt.' || '' }}
+
             ### Hinweis
             - Windows 10/11
             - Unsigniert — SmartScreen kann warnen
@@ -139,7 +145,7 @@ jobs:
             installer-out/TILageMonitor-${{ steps.version.outputs.number }}-Setup.exe
             checksums.txt
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
