@@ -285,9 +285,33 @@ public sealed class ConnectorProtocolTests
         var element = ConnectorProtocol.PinOperation(card, "UnblockPin", Settings(), "H1", "PIN.SMC", setNewPin: true);
 
         Assert.Equal(["Context", "CardHandle", "PinTyp", "SetNewPin"], element.Elements().Select(e => e.Name.LocalName).ToList());
-        Assert.Equal("PIN.SMC", element.Element(card + "PinTyp")!.Value);
-        Assert.Equal("true", element.Element(card + "SetNewPin")!.Value);
+        Assert.Equal("true", element.Element(ConnectorProtocol.CardCmn + "SetNewPin")!.Value);
         Assert.Equal("http://ws.gematik.de/conn/CardService/v8.1#UnblockPin", ConnectorProtocol.SoapAction(card, "UnblockPin"));
+    }
+
+    /// <summary>
+    /// PinTyp und SetNewPin gehoeren nachweislich ins Gemeinschaftsschema CardServiceCommon, nicht
+    /// in den Namespace des Dienstes. Beleg ist das Beispiel "ChangePin" im Implementierungsleitfaden
+    /// gemILF_PS der gematik. Stand PinTyp im Dienst-Namespace, erkannte der Konnektor das Element
+    /// nicht und antwortete auf GetPinStatus, ChangePin und VerifyCard mit 4000 Syntaxfehler.
+    /// </summary>
+    [Theory]
+    [InlineData("PIN.SMC")]
+    [InlineData("PIN.CH")]
+    public void Pin_operations_place_pin_type_in_card_service_common(string pinType)
+    {
+        XNamespace card = "http://ws.gematik.de/conn/CardService/v8.1";
+        var pinStatus = ConnectorProtocol.GetPinStatus(card, Settings(), "H1", pinType);
+        var change = ConnectorProtocol.PinOperation(card, "ChangePin", Settings(), "H1", pinType);
+
+        foreach (var element in new[] { pinStatus, change })
+        {
+            var pinTyp = element.Element(ConnectorProtocol.CardCmn + "PinTyp");
+            Assert.NotNull(pinTyp);
+            Assert.Equal(pinType, pinTyp!.Value);
+            // Im Dienst-Namespace darf nichts mehr stehen – genau das fuehrte zum 4000.
+            Assert.Null(element.Element(card + "PinTyp"));
+        }
     }
 
     private static string Wrap(string body) => $"""

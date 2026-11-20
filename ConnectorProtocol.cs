@@ -17,6 +17,16 @@ public static class ConnectorProtocol
     public static readonly XNamespace Conn = "http://ws.gematik.de/conn/ConnectorCommon/v5.0";
     public static readonly XNamespace Cctx = "http://ws.gematik.de/conn/ConnectorContext/v2.0";
     public static readonly XNamespace CertCmn = "http://ws.gematik.de/conn/CertificateServiceCommon/v2.0";
+
+    /// <summary>
+    /// Gemeinsame Typen des CardService. <c>PinTyp</c> und <c>SetNewPin</c> gehoeren hierher,
+    /// nicht in den Namespace des Dienstes selbst. Belegt durch das Beispiel im offiziellen
+    /// Implementierungsleitfaden der gematik (gemILF_PS, Beispiel "ChangePin"): dort steht
+    /// <c>xmlns:m2=".../CardServiceCommon/v2.0"</c> und <c>&lt;m2:PinTyp&gt;PIN.CH&lt;/m2:PinTyp&gt;</c>.
+    /// Sendet man PinTyp stattdessen im CardService-Namespace, erkennt der Konnektor das
+    /// Element nicht und antwortet mit 4000 Syntaxfehler – unabhaengig vom Namespace des Dienstes.
+    /// </summary>
+    public static readonly XNamespace CardCmn = "http://ws.gematik.de/conn/CardServiceCommon/v2.0";
     public static readonly XNamespace Pi = "http://ws.gematik.de/int/version/ProductInformation/v1.1";
 
     // Fallback-Namespaces, falls das Dienstverzeichnis keine TargetNamespaces liefert.
@@ -212,13 +222,13 @@ public static class ConnectorProtocol
     }
 
     public static XElement GetPinStatus(XNamespace card, ConnectorSettings s, string cardHandle, string pinType) =>
-        new(card + "GetPinStatus", Context(s), new XElement(Conn + "CardHandle", cardHandle), new XElement(card + "PinTyp", pinType));
+        new(card + "GetPinStatus", Context(s), new XElement(Conn + "CardHandle", cardHandle), new XElement(CardCmn + "PinTyp", pinType));
 
     public static XElement PinOperation(XNamespace card, string operation, ConnectorSettings s, string cardHandle, string pinType, bool? setNewPin = null)
     {
-        var element = new XElement(card + operation, Context(s), new XElement(Conn + "CardHandle", cardHandle), new XElement(card + "PinTyp", pinType));
+        var element = new XElement(card + operation, Context(s), new XElement(Conn + "CardHandle", cardHandle), new XElement(CardCmn + "PinTyp", pinType));
         if (setNewPin.HasValue)
-            element.Add(new XElement(card + "SetNewPin", setNewPin.Value ? "true" : "false"));
+            element.Add(new XElement(CardCmn + "SetNewPin", setNewPin.Value ? "true" : "false"));
         return element;
     }
 
@@ -376,9 +386,16 @@ public static class ConnectorProtocol
         if (!string.IsNullOrWhiteSpace(detail) && detail != text)
             message.Append(" (").Append(detail).Append(')');
 
+        // 4000 pauschal auf den Aufrufkontext zu schieben, war falsch: der Kontext ist bei allen
+        // Diensten identisch, und wo andere Dienste mit demselben Kontext antworten, kann er die
+        // Ursache nicht sein. Der Dienstabgleich kommt spaeter in ConnectorClient.DescribeFault
+        // – dort, wo wir die erfolgreichen Aufrufe tatsaechlich sehen. An dieser Stelle steht nur
+        // die nachweislich korrekte Kurz erklaerung, dazu die Codes, die eine eigene Handlung haben.
         if (string.Equals(code, "4000", StringComparison.Ordinal) || message.ToString().Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase))
-            message.Append(" – Der Konnektor hat die Eingabe abgelehnt. Ursache ist fast immer eine ID im Aufrufkontext, " +
-                           "die er so nicht akzeptiert (nur A-Z, a-z, 0-9, - und _, 1–64 Zeichen, kein Punkt, kein Leerzeichen).");
+            message.Append(" Der Konnektor hat die Nachricht als unlesbar abgelehnt. Er hat die Huelle verstanden " +
+                           "(es ist ein SOAP-Fehler, kein Verbindungsproblem), aber den Inhalt der Operation nicht akzeptiert.");
+        else if (string.Equals(code, "4003", StringComparison.Ordinal))
+            message.Append(" Fuer diese Operation fehlt eine Angabe im Aufrufkontext, die der Konnektor zwingend braucht.");
 
         return new ConnectorFaultException(message.ToString(), string.IsNullOrWhiteSpace(code) ? null : code);
     }
