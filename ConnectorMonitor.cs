@@ -149,13 +149,14 @@ public sealed class ConnectorMonitor : IDisposable
                 await EnsureSubscriptionsAsync(client, ct);
 
             if (settings.HistoryEnabled)
-            {
                 ConnectorHistoryStore.UpsertNow(snapshot, DateTime.Now);
 
-                // Konfigurationsabgleich ueber Zeit: meldet nur Verstellungen, keine Normalfaelle.
-                foreach (var change in ConnectorConfigurationDiff.CompareAndRemember(snapshot))
-                    Notify(L("Konnektor-Konfiguration geaendert", "Connector configuration changed"), change, ToastUrgency.Warning, "konnektor-konfig");
-            }
+            // Konfigurationsabgleich ueber Zeit: meldet nur Verstellungen, keine Normalfaelle.
+            // Bewusst auerhalb des Verlastkastens – der Vergleich braucht keine Ablage in der
+            // Timeline, nur den letzten Stand. Wer den Verlauf abschaltet, dem faellt sonst
+            // lautlos auch die Warnung vor still gerollter Firmware oder verlegten Terminals weg.
+            foreach (var change in ConnectorConfigurationDiff.CompareAndRemember(snapshot))
+                Notify(L("Konnektor-Konfiguration geaendert", "Connector configuration changed"), change, ToastUrgency.Warning, "konnektor-konfig");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

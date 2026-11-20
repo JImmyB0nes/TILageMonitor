@@ -1738,6 +1738,12 @@ public partial class ConnectorWindow : Window
         CardDetailPanel.IsEnabled = !busy;
         TerminalDetailPanel.IsEnabled = !busy;
         Cursor = busy ? System.Windows.Input.Cursors.AppStarting : null;
+        if (!busy && _themeRefreshQueued)
+        {
+            _themeRefreshQueued = false;
+            if (_snapshot is not null)
+                Render(_snapshot);
+        }
         if (text is not null)
             FooterText.Text = text;
         else if (!busy && _snapshot is not null)
@@ -1792,8 +1798,21 @@ public partial class ConnectorWindow : Window
         null => null
     };
 
+    /// <summary>Steht da, wenn ein Farbwechsel mitten in eine laufende Aktion fiel.</summary>
+    private bool _themeRefreshQueued;
+
     public void ApplyThemeRefresh()
     {
+        // Waehrend einer laufenden Aktion wird nicht neu gebaut, sondern nachgeholt, sobald sie
+        // fertig ist. Der Neuaufbau der Knopfe mitten in einer PIN-Abfrage am Terminal wuerde
+        // die gerade beschriftete Karte austauschen. Ganz ueberspringen darf man aber auch
+        // nicht, sonst bleibt die Maske nach dem Farbwechsel auf den alten Pinseln stehen.
+        if (_busy)
+        {
+            _themeRefreshQueued = true;
+            return;
+        }
+        _themeRefreshQueued = false;
         if (_snapshot is not null)
             Render(_snapshot);
     }

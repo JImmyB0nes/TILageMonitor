@@ -41,6 +41,15 @@ public static class ConnectorHistoryStore
     private const int KeepDays = 14;
     private const int HoursPerDay = 24;
 
+    /// <summary>
+    /// Haelt die Folge Laden – Aendern – Speichern zusammen. Ohne diese Klappe koennen der
+    /// Hintergrundpoller und ein Aufruf aus dem Konnektor-Fenster gleichzeitig denselben Stand
+    /// aufmachen, beide fuergen ihre Meldungen ein, und wer zuletzt schreibt, loescht die des
+    /// anderen mitsamt der Datei. Bei einem fruehen Schreibversuch auf leere Menge wuerde aus
+    /// der Datei eine Stunde ohne Eintrag.
+    /// </summary>
+    private static readonly object Gate = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -91,6 +100,12 @@ public static class ConnectorHistoryStore
     /// entschaerft: ein einzelner Fehler in einer Stunde soll in der Timeline sichtbar bleiben.
     /// </summary>
     public static ConnectorHistoryFile UpsertNow(ConnectorSnapshot snapshot, DateTime now)
+    {
+        lock (Gate)
+            return UpsertLocked(snapshot, now);
+    }
+
+    private static ConnectorHistoryFile UpsertLocked(ConnectorSnapshot snapshot, DateTime now)
     {
         var file = Load();
         file.Hours ??= new List<ConnectorHourSnapshot>();
