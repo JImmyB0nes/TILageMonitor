@@ -161,36 +161,84 @@ public sealed class ConnectorEventStream : IDisposable
     }
 
     /// <summary>
-    /// Holt eine moeglichst vollstaendige XML-Nachricht aus dem Puffer. Ein geschlossenes
-    /// Dokument wird am passenden "</Envelope>" bzw. "</Event>" geschnitten; bleibt nichts
-    /// uebrig, wird verworfen, damit ein beschadigter Stream nicht endlos anwaechst.
+    /// Holt die naechstfertige XML-Nachricht aus dem Puffer.
+    /// </summary>
+    /// <remarks>
+    /// Der Konnektor liefert eine SOAP-Huelle, und die kommt ueblicherweise in mehreren
+    /// TCP-Stuecken an. Ein Schnitt auf das INHERE </Event> – also die fruehere Fassung –
+    /// warf bei einer verteilten Nachricht ein halbes Dokument weg: XDocument.Parse
+    /// scheiterte, ParseEvent lieferte null, das Ereignis war lautlos weg. Geschnitten wird
+    /// deshalb erst am aeussersten Schluss-Tag, und nur wenn mit Sicherheit feststeht, dass
+    /// die Nachricht vollstaendig ist. Ein laufender envelope-Anfang haelt die Innen-Tag
+    /// bis zum naechsten Lesedurchgang zurueck.
     /// </summary>
     private static bool TakeMessage(ref StringBuilder pending, out string message)
     {
         message = "";
         var text = pending.ToString();
-        var eventEnd = text.LastIndexOf("</Event>", StringComparison.OrdinalIgnoreCase);
-        var envelopeEnd = text.LastIndexOf("</Envelope>", StringComparison.OrdinalIgnoreCase);
-        var closingTag = envelopeEnd > eventEnd ? "</Envelope>" : "</Event>";
-        var end = Math.Max(eventEnd, envelopeEnd);
+        const string envelopeClosing = "</Envelope>";
+        const string eventClosing = "</Event>";
 
-        if (end < 0)
+        var envelopeEnd = text.IndexOf(envelopeClosing, StringComparison.OrdinalIgnoreCase);
+        if (envelopeEnd >= 0)
         {
-            if (text.Length > 2_000_000)
-                pending.Clear();
-            return false;
+            Cut(ref pending, text, envelopeEnd + envelopeClosing.Length, out message);
+            return true;
         }
 
-        var start = text.IndexOf("<?xml", StringComparison.OrdinalIgnoreCase);
-        if (start < 0)
-            start = text.IndexOf('<', StringComparison.Ordinal);
-        if (start < 0)
-            start = 0;
+        // Ohne Huelle ist das Ereignis selbst die ganze Nachricht – aber nur, solange nicht
+        // gerade eine Huelle laeuft, deren Ende noch fehlt. Der Oeffnungsanker ist mit
+        // Vorsicht zu sehen: ueblich steht ein Namespace-Praefix dazwischen (<soap:Envelope>),
+        // ein blosses Suchen auf "<Envelope" haette die Huelle uebersehen und zu frueh
+        // geschnitten – derselbe Fehler, den die fruehere Fassung am Innen-Tag beging.
+        if (!HasOpeningEnvelope(text))
+        {
+            var eventEnd = text.IndexOf(eventClosing, StringComparison.OrdinalIgnoreCase);
+            if (eventEnd < 0)
+            {
+                Guard(ref pending, text);
+                return false;
+            }
 
-        message = text.Substring(start, end + closingTag.Length - start);
+            Cut(ref pending, text, eventEnd + eventClosing.Length, out message);
+            return true;
+        }
+
+        Guard(ref pending, text);
+        return false;
+    }
+
+    /// <summary>
+    /// Steht irgendwo ein oeffnendes Envelope-Element? Es kann ein Praefix voranstehen
+    /// (<soap:Envelope>, <ns1:Envelope>), deshalb wird beides geprueft.
+    /// </summary>
+    private static bool HasOpeningEnvelope(string text)
+    {
+        var at = text.IndexOf("Envelope", StringComparison.OrdinalIgnoreCase);
+        while (at > 0)
+        {
+            var before = text[at - 1];
+            if (before is '<' or ':')
+                return true;
+            at = text.IndexOf("Envelope", at + 1, StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
+
+    /// <summary>Schneidet die Nachricht bis <paramref name="end"/> ab und stellt den Rest zurueck.</summary>
+    private static void Cut(ref StringBuilder pending, string text, int end, out string message)
+    {
+        message = text[..end];
         pending.Clear();
-        pending.Append(text[(end + closingTag.Length)..]);
-        return message.Contains('<') && message.Contains('>');
+        if (end < text.Length)
+            pending.Append(text[end..]);
+    }
+
+    /// <summary>Ein beschaedigter Stream darf den Puffer nicht endlos anwachsen lassen.</summary>
+    private static void Guard(ref StringBuilder pending, string text)
+    {
+        if (text.Length > 2_000_000)
+            pending.Clear();
     }
 
     private void Dispatch(string xml)

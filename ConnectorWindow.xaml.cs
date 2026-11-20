@@ -78,7 +78,11 @@ public partial class ConnectorWindow : Window
             if (_busy)
                 return;
             var latest = _ownerMain.ConnectorMonitor.LastSnapshot;
-            if (latest is not null && !ReferenceEquals(latest, _snapshot))
+            // Nach Alter ziehen, nicht nach Instanz. Der Monitor meldet sich naemlich auch, wenn
+            // ein Poll gescheitert ist – dann bleibt sein Stand unveraendelt. Ein reiner
+            // Instanzvergleich haette den aelteren Stand ueber die frischeren Angaben des
+            // Nutzers gezeichnet, die gerade erst per 'Test' oder 'Aktualisieren' geholt wurden.
+            if (latest is not null && latest.RetrievedAt > (_snapshot?.RetrievedAt ?? DateTime.MinValue))
                 Render(latest);
         }
 
@@ -1479,7 +1483,7 @@ public partial class ConnectorWindow : Window
         if (_snapshot is null)
             return;
         var current = _ownerMain.ConnectorMonitor.LastSnapshot;
-        if (current is null || ReferenceEquals(current, _snapshot))
+        if (current is null || current.RetrievedAt <= _snapshot.RetrievedAt)
             _ownerMain.ConnectorMonitor.Accept(_snapshot);
     }
 
