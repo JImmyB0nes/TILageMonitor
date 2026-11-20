@@ -285,9 +285,33 @@ public sealed class ConnectorProtocolTests
         var element = ConnectorProtocol.PinOperation(card, "UnblockPin", Settings(), "H1", "PIN.SMC", setNewPin: true);
 
         Assert.Equal(["Context", "CardHandle", "PinTyp", "SetNewPin"], element.Elements().Select(e => e.Name.LocalName).ToList());
-        Assert.Equal("PIN.SMC", element.Element(card + "PinTyp")!.Value);
-        Assert.Equal("true", element.Element(card + "SetNewPin")!.Value);
+        Assert.Equal("true", element.Element(ConnectorProtocol.CardCmn + "SetNewPin")!.Value);
         Assert.Equal("http://ws.gematik.de/conn/CardService/v8.1#UnblockPin", ConnectorProtocol.SoapAction(card, "UnblockPin"));
+    }
+
+    /// <summary>
+    /// PinTyp und SetNewPin gehoeren nachweislich ins Gemeinschaftsschema CardServiceCommon, nicht
+    /// in den Namespace des Dienstes. Beleg ist das Beispiel "ChangePin" im Implementierungsleitfaden
+    /// gemILF_PS der gematik. Stand PinTyp im Dienst-Namespace, erkannte der Konnektor das Element
+    /// nicht und antwortete auf GetPinStatus, ChangePin und VerifyCard mit 4000 Syntaxfehler.
+    /// </summary>
+    [Theory]
+    [InlineData("PIN.SMC")]
+    [InlineData("PIN.CH")]
+    public void Pin_operations_place_pin_type_in_card_service_common(string pinType)
+    {
+        XNamespace card = "http://ws.gematik.de/conn/CardService/v8.1";
+        var pinStatus = ConnectorProtocol.GetPinStatus(card, Settings(), "H1", pinType);
+        var change = ConnectorProtocol.PinOperation(card, "ChangePin", Settings(), "H1", pinType);
+
+        foreach (var element in new[] { pinStatus, change })
+        {
+            var pinTyp = element.Element(ConnectorProtocol.CardCmn + "PinTyp");
+            Assert.NotNull(pinTyp);
+            Assert.Equal(pinType, pinTyp!.Value);
+            // Im Dienst-Namespace darf nichts mehr stehen – genau das fuehrte zum 4000.
+            Assert.Null(element.Element(card + "PinTyp"));
+        }
     }
 
     private static string Wrap(string body) => $"""
@@ -607,6 +631,37 @@ public sealed class ConnectorHealthTests
         Assert.Contains("cert-expired-2", keys);
         Assert.Contains("pin-blocked-2-PIN.CH", keys);
         Assert.DoesNotContain("no-smcb", keys);
+    }
+
+    [Theory]
+    [InlineData("http://ws.gematik.de/conn/EventService/v7.2", "http://ws.gematik.de/conn/EventService/v7.2")]
+    [InlineData("http://ws.gematik.de/conn/EventService/WSDL/v7.2", "http://ws.gematik.de/conn/EventService/v7.2")]
+    [InlineData("http://ws.gematik.de/conn/CardService/WSDL/v8.1", "http://ws.gematik.de/conn/CardService/v8.1")]
+    [InlineData("http://ws.gematik.de/conn/EventService/WSDL/v7.2.1", "http://ws.gematik.de/conn/EventService/v7.2.1")]
+    public void WSDL_namespace_from_the_service_directory_becomes_the_message_namespace(string fromSds, string expected)
+    {
+        Assert.Equal(expected, ConnectorProtocol.NormalizeMessageNamespace(fromSds));
+    }
+
+    [Fact]
+    public void Namespace_candidates_try_the_resolved_namespace_first_and_never_twice()
+    {
+        var withWsdl = ConnectorProtocol.NamespaceCandidates(
+            "http://ws.gematik.de/conn/EventService/WSDL/v7.2",
+            "http://ws.gematik.de/conn/EventService/v7.2");
+
+        // Der aufloeste Namespace muss zuerst kommen, sonst gewinnt die Variante, die der
+        // Konnektor nachweislich ablehnt. Der Fallback ist identisch, also kein Duplikat.
+        Assert.Equal("http://ws.gematik.de/conn/EventService/v7.2", withWsdl[0]);
+        Assert.Equal(2, withWsdl.Count);
+
+        var plain = ConnectorProtocol.NamespaceCandidates(
+            "http://ws.gematik.de/conn/EventService/v6.1",
+            "http://ws.gematik.de/conn/EventService/v7.2");
+        Assert.Equal(2, plain.Count);
+        Assert.Equal("http://ws.gematik.de/conn/EventService/v6.1", plain[0]);
+
+        Assert.Single(ConnectorProtocol.NamespaceCandidates(null, "http://ws.gematik.de/conn/EventService/v7.2"));
     }
 
     [Fact]

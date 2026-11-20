@@ -31,6 +31,13 @@ public sealed class ConnectorClient : IDisposable
     private readonly Action<string>? _log;
     private ConnectorServiceDirectory? _directory;
 
+    /// <summary>
+    /// Welche Dienste in diesem Durchlauf schon geantwortet haben, und wie oft. Die Zaehler ist die
+    /// Grundlage der Fehlererklaerung: der Aufrufkontext ist bei allen Diensten identisch, und ein
+    /// Dienst, der damit schon geantwortet hat, widerlegt den Verdacht gegen denselben Kontext.
+    /// </summary>
+    private readonly Dictionary<string, int> _okByService = new(StringComparer.OrdinalIgnoreCase);
+
     public string? LastServerThumbprint { get; private set; }
     public string? LastServerSubject { get; private set; }
     public DateTime? LastServerNotAfter { get; private set; }
@@ -176,49 +183,128 @@ public sealed class ConnectorClient : IDisposable
         var directory = await GetServiceDirectoryAsync(ct);
         var service = directory.Find(serviceName)
                       ?? throw new ConnectorFaultException($"Der Konnektor bietet den Dienst {serviceName} nicht an.");
-        XNamespace ns = string.IsNullOrWhiteSpace(service.TargetNamespace) ? defaultNs : service.TargetNamespace;
         var endpoint = ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);
 
-        var envelope = ConnectorProtocol.Envelope(build(ns));
-        LastRequestXml = envelope;
-        try
-        {
-            return await PostAsync(serviceName, operation, ns, endpoint, envelope, timeout, ct);
-        }
-        catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
-        {
-            // RISE-Konnektoren quittieren unzulässige Eingaben pauschal mit "4000 Syntaxfehler".
-            // Zwei harmlose Varianten, die wir testweise durchspielen, damit der Nutzer nicht
-            // raten muss: Aufruf ohne Benutzer-ID, und (für Karten/Terminals) ohne Mandanten-Radius.
-            _log?.Invoke($"{serviceName}.{operation}: Syntaxfehler – 4000, prüfe Aufrufkontext und Mandanten-Radius");
-            _log?.Invoke($"  gesendeter Request: {ShortenXml(envelope)}");
+        // Namespace-Varianten der Reihe nach durchprobieren. Das ist ein echter Test, kein Raten:
+        // antwortet der Konnektor mit einer Variante, hoeren wir sofort auf. Scheitern alle, ist
+        // der Namespace als Ursache widerlegt und die Diagnose oben muss das benennen koennen.
+        var candidates = ConnectorProtocol.NamespaceCandidates(service.TargetNamespace, defaultNs);
+        ConnectorFaultException? last = null;
 
-            if (!string.IsNullOrWhiteSpace(_settings.UserId))
+        foreach (var candidate in candidates)
+        {
+            XNamespace ns = candidate;
+            var envelope = ConnectorProtocol.Envelope(build(ns));
+            LastRequestXml = envelope;
+            try
             {
-                var saved = _settings.UserId;
-                _settings.UserId = "";
-                try
-                {
-                    var retried = await PostAsync(serviceName, operation, ns, endpoint,
-                        ConnectorProtocol.Envelope(build(ns)), timeout, ct);
-                    _log?.Invoke($"  Erfolg ohne Benutzer-ID \u201E{saved}\u201C – diese ID akzeptiert der Konnektor nicht");
-                    return retried;
-                }
-                finally
-                {
-                    _settings.UserId = saved;
-                }
+                var answer = await PostAsync(serviceName, operation, ns, endpoint, envelope, timeout, ct);
+                _okByService[serviceName] = _okByService.TryGetValue(serviceName, out var done) ? done + 1 : 1;
+                return answer;
             }
-
-            // Alle drei EventService-Operationen scheitern gleich, wenn der Konnektor eine
-            // ID im Aufrufkontext ablehnt – deshalb beide Werte für den Vergleich mit der
-            // Konnektor-Administration mitliefern.
-            throw new ConnectorFaultException(
-                $"{ex.Message}\nAufrufkontext: Mandant=\u201E{_settings.MandantId}\u201C, Clientsystem=\u201E{_settings.ClientSystemId}\u201C, " +
-                $"Arbeitsplatz=\u201E{_settings.WorkplaceId}\u201C{(string.IsNullOrWhiteSpace(_settings.UserId) ? "" : $", Benutzer=\u201E{_settings.UserId}\u201C")}\n" +
-                "Bitte exakt die Werte aus der Konnektor-Administration verwenden (nur A-Z, a-z, 0-9, - und _).\n" +
-                $"Gesendeter Request: {ShortenXml(envelope)}", ex.Code);
+            catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
+            {
+                last = ex;
+                _log?.Invoke($"{serviceName}.{operation}: abgelehnt ({ex.Code ?? "4000"}), Namespace {candidate}");
+                if (candidates.Count > 1)
+                    _log?.Invoke("  nächster Namespace-Versuch");
+            }
         }
+
+        // Eine einzige Rueckfallebene, klar protokolliert: eine unzulassige Benutzer-ID laesst
+        // beim RISE-Konnektor saemtliche Aufrufe mit 4000 scheitern. Weglassen statt wechseln ist
+        // hier die einzige Vernderung, die der Konnektor akzeptiert, und sie ist reversibel.
+        if (last is not null && ConnectorProtocol.IsSyntaxError(last) && !string.IsNullOrWhiteSpace(_settings.UserId))
+        {
+            var saved = _settings.UserId;
+            _settings.UserId = "";
+            try
+            {
+                var answer = await PostAsync(serviceName, operation, candidates[0], endpoint,
+                    ConnectorProtocol.Envelope(build(candidates[0])), timeout, ct);
+                _log?.Invoke($"  Gelungen ohne Benutzer-ID \u201E{saved}\u201C – die akzeptiert dieser Konnektor nicht");
+                _settings.UserId = saved;
+                _okByService[serviceName] = _okByService.TryGetValue(serviceName, out var done) ? done + 1 : 1;
+                return answer;
+            }
+            catch (ConnectorFaultException)
+            {
+                // Ohne ID bleibt es auch abgelehnt – dann ist die ID die Ursache gewiss nicht.
+            }
+            finally
+            {
+                _settings.UserId = saved;
+            }
+        }
+
+        throw new ConnectorFaultException(DescribeFault(last!, serviceName, operation, endpoint, candidates), last!.Code);
+    }
+
+    /// <summary>
+    /// Erklaert einen zurueckgewiesenen Aufruf anhand dessen, was die Sitzung bisher gezeigt hat.
+    /// Der entscheidende Unterschied zu frueheren Versionen: der Aufrufkontext wird nicht mehr
+    /// pauschal beschuldigt, sondern gegen die erfolgreich beantworteten Dienste desselben
+    /// Durchlaufs geprueft. Ist der Kontext woanders akzeptiert, faellt die Behauptung weg.
+    /// </summary>
+    private string DescribeFault(ConnectorFaultException fault, string serviceName, string operation, Uri endpoint, List<string> candidates)
+    {
+        var lines = new List<string> { fault.Message };
+        var code = fault.Code ?? "";
+
+        // 1. Kontext: nur anprangern, wenn er formal unzulaessig ist. Alles andere ist Spekulation.
+        var contextProblems = ConnectorProtocol.ValidateContextIds(_settings);
+        if (contextProblems is not null)
+        {
+            lines.Add("Der Aufrufkontext enthaelt unzulässige Angaben:\n" + contextProblems);
+        }
+        else if (_okByService.Count > 0)
+        {
+            var working = string.Join(", ", _okByService.OrderBy(k => k.Key).Select(k => $"{k.Key} ({_okByService[k.Key]}mal)"));
+            lines.Add($"Mit exakt demselben Aufrufkontext haben in diesem Durchlauf {working} geantwortet. " +
+                      "Der Kontext kann die Ursache dieser Ablehnung deshalb nicht sein.");
+        }
+        else
+        {
+            lines.Add("Noch kein anderer Dienst mit diesem Kontext befragt – Vergleiche fehlen. " +
+                      $"Kontext: Mandant=\u201E{_settings.MandantId}\u201C, Clientsystem=\u201E{_settings.ClientSystemId}\u201C, " +
+                      $"Arbeitsplatz=\u201E{_settings.WorkplaceId}\u201C" +
+                      (string.IsNullOrWhiteSpace(_settings.UserId) ? "" : $", Benutzer=\u201E{_settings.UserId}\u201C"));
+        }
+
+        // 2. Namespace: nur ein Hinweis, wenn das Verzeichnis tatsaechlich den /WSDL/-Wert liefert.
+        if (candidates.Count > 1)
+            lines.Add("Getestete Namespaces: " + string.Join(", ", candidates));
+
+        // 3. 4003: eine zwingende Angabe fehlt. Fuer Kartensitzungen des HBA ist das die Benutzer-ID.
+        if (code.StartsWith("4003", StringComparison.Ordinal))
+        {
+            lines.Add(string.IsNullOrWhiteSpace(_settings.UserId)
+                ? "Diese Operation braucht eine Benutzer-ID im Aufrufkontext. Sie ist im Einstellfeld " +
+                  "\u201EBenutzer-ID (optional)\u201C leer – bitte die in der Konnektor-Administration gefuehrte " +
+                  "Benutzer-ID des Arbeitsplatzes eintragen und erneut abrufen."
+                : $"Der Konnektor akzeptiert die eingetragene Benutzer-ID \u201E{_settings.UserId}\u201C fuer diese " +
+                  "Operation nicht. Vergleichen mit der Konnektor-Administration, dort steht die gueltige Schreibweise.");
+        }
+
+        // 4. 4000 auf genau einer Operation, obwohl derselbe Dienst sonst antwortet: dann liegt es
+        // am Inhalt dieser Operation, nicht an Adresse, Namespace oder Kontext.
+        else if (code.StartsWith("4000", StringComparison.Ordinal) && _okByService.TryGetValue(serviceName, out var passed))
+        {
+            lines.Add($"Der {serviceName} hat in diesem Durchlauf schon {passed} Mal geantwortet, nur {operation} wird abgelehnt. " +
+                      "Adresse, Namespace und Aufrufkontext sind damit ausgeschlossen. Die Ablehnung haengt an den " +
+                      "Angaben dieser einen Operation. Bei PIN-Aufrufen ist der gueltige Ort von PinTyp das " +
+                      "Gemeinschaftsschema CardServiceCommon/v2.0, nicht der Dienst-Namespace " +
+                      "(Beispiel im Implementierungsleitfaden gemILF_PS) – dieser Fall wird hier automatisch behoben.");
+        }
+        else if (code.StartsWith("4000", StringComparison.Ordinal))
+        {
+            lines.Add("Der Namespace wurde in allen Varianten probiert und jeweils gleich abgelehnt, " +
+                      "er scheidet als Ursache damit aus. Ubrig bleiben die Angaben in der Nachricht selbst.");
+        }
+
+        lines.Add($"Endpunkt: {endpoint}");
+        lines.Add($"Zuletzt gesendeter Request: {ShortenXml(LastRequestXml)}");
+        return string.Join("\n", lines);
     }
 
     private static string ShortenXml(string xml) =>
@@ -384,7 +470,9 @@ public sealed class ConnectorClient : IDisposable
     {
         // CardService liefert IsContextAvailable, nicht EventService – Namespace aus dem SDS.
         var service = (await GetServiceDirectoryAsync(ct)).Find("CardService") is { } found ? found : null;
-        XNamespace ns = service?.TargetNamespace is { Length: > 0 } target ? target : ConnectorProtocol.DefaultCardServiceNs;
+        XNamespace ns = service?.TargetNamespace is { Length: > 0 } target
+            ? ConnectorProtocol.NormalizeMessageNamespace(target)
+            : ConnectorProtocol.DefaultCardServiceNs;
         var endpoint = service is null
             ? _baseUri
             : ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);

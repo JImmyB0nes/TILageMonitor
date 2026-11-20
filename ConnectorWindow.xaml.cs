@@ -41,6 +41,12 @@ public partial class ConnectorWindow : Window
                 ConnectionExpander.IsExpanded = false;
                 await LoadSnapshotAsync(settings, interactive: false);
             }
+            else
+            {
+                // Ohne Zugang bringt die Uebersicht nichts als Leere – der Nutzer soll dorthin,
+                // wo er zuerst etwas tun kann. War frueher dasselbe Verhalten, nur ohne Umweg.
+                Tabs.SelectedItem = ConnectionTab;
+            }
         };
     }
 
@@ -202,7 +208,12 @@ public partial class ConnectorWindow : Window
         Persist(s);
         UpdateClientCertInfo(s);
         if (await LoadSnapshotAsync(s, interactive: true))
+        {
             ConnectionExpander.IsExpanded = false;
+            // Nach gelungener Verbindung zurueck auf die Ansicht mit den Ergebnissen, nicht die
+            // Einstellungen, die man soeben erledigt hat.
+            Tabs.SelectedIndex = 0;
+        }
     }
 
     private async void Test_Click(object sender, RoutedEventArgs e)
@@ -296,7 +307,11 @@ public partial class ConnectorWindow : Window
         {
             var message = DescribeException(ex);
             Log("✖ " + message);
-            ShowStatus(L("Konnektor nicht erreichbar", "Connector unreachable"), message, "StatusOutage");
+            ShowStatus(L("Konnektor nicht erreichbar", "Connector unreachable"), message, "StatusOutage", "\u2715");
+            // Scheiternder Zugang gehoert an die Einstellugen, nicht hinter einen Hinweis auf der
+            // Uebersicht, den man erst finden muss.
+            if (interactive)
+                Tabs.SelectedItem = ConnectionTab;
             if (interactive)
                 ShowWarning(message);
             return false;
@@ -367,14 +382,25 @@ public partial class ConnectorWindow : Window
                 ToastUrgency.Warning => L($"{name}: Hinweise beachten", $"{name}: attention needed"),
                 _ => L($"{name}: alles in Ordnung", $"{name}: all good")
             },
-            $"{tiState} · {snapshot.Cards.Count} {L("Karten", "cards")} · {snapshot.Terminals.Count} {L("Terminals", "terminals")} · " +
-            L($"Stand {snapshot.RetrievedAt:HH:mm:ss}", $"as of {snapshot.RetrievedAt:HH:mm:ss}"),
+            L($"Stand {snapshot.RetrievedAt:HH:mm:ss} Uhr", $"as of {snapshot.RetrievedAt:HH:mm:ss}"),
             worst switch
             {
                 ToastUrgency.Error => "StatusOutage",
                 ToastUrgency.Warning => "StatusPartial",
                 _ => "StatusOk"
+            },
+            worst switch
+            {
+                ToastUrgency.Error => "\u2715",
+                ToastUrgency.Warning => "\u203A",
+                _ => "\u2713"
             });
+
+        // Kennzahlen direkt im Banner, damit sie nicht als Textkoloss unter dem Titel untergehen.
+        StatusChips.Children.Clear();
+        StatusChips.Children.Add(Chip(tiState, null));
+        StatusChips.Children.Add(Chip($"{snapshot.Cards.Count} {L("Karten", "cards")}", null));
+        StatusChips.Children.Add(Chip($"{snapshot.Terminals.Count} {L("Terminals", "terminals")}", null));
 
         RenderAlerts(alerts, snapshot.Warnings);
         RenderConnectorInfo(snapshot);
@@ -384,12 +410,34 @@ public partial class ConnectorWindow : Window
         FooterText.Text = L($"Letzter Abruf: {snapshot.RetrievedAt:dd.MM.yyyy HH:mm:ss}", $"Last retrieved: {snapshot.RetrievedAt:yyyy-MM-dd HH:mm:ss}");
     }
 
-    private void ShowStatus(string title, string detail, string statusKey)
+    private void ShowStatus(string title, string detail, string statusKey, string glyph = "\u2022")
     {
         StatusTitle.Text = title;
         StatusDetail.Text = detail;
+        StatusGlyph.Text = glyph;
+        StatusIconCircle.Background = Brush(statusKey);
         StatusBanner.Background = Brush(statusKey + "Surface");
         StatusBanner.BorderBrush = Brush(statusKey + "Border");
+    }
+
+    /// <summary>
+    /// Kleine Info-Kapsel: winzige Beschriftung, daneben der eigentliche Wert. Haelt
+    /// Wertelisten kompakt, statt jede Angabe in eine eigene Zeile zu zwingen.
+    /// </summary>
+    private Border Chip(string value, string? colorKey)
+    {
+        return new Border
+        {
+            Child = new TextBlock
+            {
+                Text = value,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brush(colorKey ?? "TextMain"),
+                TextWrapping = TextWrapping.Wrap
+            },
+            Style = (Style)FindResource("ChipStyle")
+        };
     }
 
     private void RenderAlerts(List<ConnectorAlert> alerts, List<string> warnings)
@@ -398,34 +446,99 @@ public partial class ConnectorWindow : Window
         foreach (var alert in alerts.OrderByDescending(a => a.Urgency))
         {
             var icon = alert.Urgency == ToastUrgency.Error ? "⛔" : alert.Urgency == ToastUrgency.Warning ? "⚠" : "ℹ";
-            AlertsPanel.Children.Add(Line($"{icon}  {alert.Title}", alert.Body, alert.Urgency == ToastUrgency.Error ? "StatusOutage" : "StatusPartial"));
+            AlertsPanel.Children.Add(Alert($"{icon}  {alert.Title}", alert.Body, alert.Urgency == ToastUrgency.Error ? "StatusOutage" : "StatusPartial"));
         }
         foreach (var warning in warnings)
-            AlertsPanel.Children.Add(Line("ℹ  " + L("Teilabfrage fehlgeschlagen", "Partial query failed"), warning, null));
+            AlertsPanel.Children.Add(Alert("ℹ  " + L("Teilabfrage fehlgeschlagen", "Partial query failed"), warning, null));
 
         AlertsCard.Visibility = AlertsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Hinweis mit abgetrenntem Detailtext. Konnektor-Fehler enthalten sonst die komplette
+    /// gesendete Nachricht – das sprengt jede Maske. Der Kernsatz steht oben, alles Weitere
+    /// erst auf Knopfdruck. Der volle Text bleibt im Protokollreiter und im Bericht erhalten.
+    /// </summary>
+    private UIElement Alert(string title, string body, string? colorKey)
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = colorKey is null ? Brush("TextMain") : Brush(colorKey),
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        var lines = body.Split('\n');
+        var lead = lines[0].Trim();
+        if (lead.Length > 300)
+            lead = lead[..300] + " …";
+        panel.Children.Add(new TextBlock
+        {
+            Text = lead,
+            FontSize = 12,
+            Foreground = Brush("TextMuted"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 0)
+        });
+
+        // Alles ab der zweiten Zeile ist Zusatzmaterial (IDs, Namespaces, XML): nur bei Bedarf.
+        if (lines.Length > 1)
+        {
+            var more = new Expander
+            {
+                Header = L("Details anzeigen", "Show details"),
+                FontSize = 11,
+                Foreground = Brush("TextMuted"),
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            more.Content = new TextBlock
+            {
+                Text = string.Join("\n", lines.Skip(1)).Trim(),
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontSize = 11,
+                Foreground = Brush("TextMuted"),
+                TextWrapping = TextWrapping.Wrap
+            };
+            panel.Children.Add(more);
+        }
+        return panel;
     }
 
     private void RenderConnectorInfo(ConnectorSnapshot snapshot)
     {
         ConnectorInfoGrid.Children.Clear();
-        ConnectorInfoGrid.RowDefinitions.Clear();
         var dir = snapshot.Directory;
         var res = snapshot.Resource;
 
+        // Kapseln nebeneinander statt einer langen Zweispalten-Liste: der Konnektor liefert
+        // nur wenige Angaben, und die sollen nicht halbleerig untereinander stehen.
         void Row(string label, string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
                 return;
-            var row = ConnectorInfoGrid.RowDefinitions.Count;
-            ConnectorInfoGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var l = new TextBlock { Text = label, Foreground = Brush("TextMuted"), FontSize = 12, Margin = new Thickness(0, 0, 12, 6) };
-            var v = new TextBlock { Text = value, Foreground = Brush("TextMain"), FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
-            Grid.SetRow(l, row);
-            Grid.SetRow(v, row);
-            Grid.SetColumn(v, 1);
-            ConnectorInfoGrid.Children.Add(l);
-            ConnectorInfoGrid.Children.Add(v);
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock
+            {
+                Text = label.ToUpperInvariant(),
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brush("TextMuted")
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = value,
+                FontSize = 12,
+                Foreground = Brush("TextMain"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 1, 0, 0)
+            });
+            ConnectorInfoGrid.Children.Add(new Border
+            {
+                Child = panel,
+                Style = (Style)FindResource("ChipStyle")
+            });
         }
 
         if (dir is not null)
@@ -466,13 +579,42 @@ public partial class ConnectorWindow : Window
                      .ThenBy(c => c.SlotId))
         {
             var panel = new StackPanel();
-            panel.Children.Add(new TextBlock
+
+            // Kopfzeile: Art-Abzeichen, Name, rechts der grobe Zustand. Ein Blick, keine Textwand.
+            var header = new Grid();
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var kind = card.IsSmcB ? "SMC-B" : card.IsHba ? "HBA" : card.IsEgk ? "eGK"
+                : string.IsNullOrWhiteSpace(card.CardType) ? "KARTE" : card.CardType;
+            var badge = Badge(kind, card.IsSmcB || card.IsHba ? "StatusMaintenance" : null);
+            badge.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(badge, 0);
+            header.Children.Add(badge);
+
+            var title = new TextBlock
             {
                 Text = card.DisplayName,
-                FontSize = 14,
+                FontSize = 15,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = Brush("TextMain")
-            });
+                Foreground = Brush("TextMain"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 0, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetColumn(title, 1);
+            header.Children.Add(title);
+
+            var worstPin = WorstPinState(card);
+            if (worstPin is not null)
+            {
+                var stateBadge = Badge(worstPin, worstPin.Contains("iert", StringComparison.Ordinal) ? "StatusOk" : "StatusPartial");
+                stateBadge.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(stateBadge, 2);
+                header.Children.Add(stateBadge);
+            }
+            panel.Children.Add(header);
 
             var ctLabel = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
             var details = new List<string>
@@ -508,16 +650,17 @@ public partial class ConnectorWindow : Window
             if (!string.IsNullOrWhiteSpace(cert?.Organization) && cert!.Organization != card.CardHolderName) details.Add(L("Organisation", "Organization") + $": {cert.Organization}");
             if (cert is not null) details.Add($"{cert.CertRef} · {cert.KeyAlgorithm} · {L("Aussteller", "Issuer")} {cert.Issuer}");
 
-            panel.Children.Add(new TextBlock
+            var meta = new TextBlock
             {
                 Text = string.Join("   ·   ", details),
                 FontSize = 12,
                 Foreground = Brush("TextMuted"),
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 4, 0, 6)
-            });
+                Margin = new Thickness(0, 5, 0, 8)
+            };
+            panel.Children.Add(meta);
 
-            // PIN-Status und Aktionen
+            // PIN-Zeilen als schmale Tabellenzeilen, damit die Buttons nicht umbiegen.
             foreach (var pinType in card.PinTypes)
             {
                 var state = card.PinStates.FirstOrDefault(p => p.PinType == pinType);
@@ -526,7 +669,7 @@ public partial class ConnectorWindow : Window
 
             if (card.SupportsPinManagement)
             {
-                var actions = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+                var actions = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
                 if (cert is not null)
                     actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card)));
                 actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card)));
@@ -545,7 +688,7 @@ public partial class ConnectorWindow : Window
                 BorderBrush = Brush("BorderSubtle"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(14, 12, 14, 12),
+                Padding = new Thickness(16, 14, 16, 14),
                 Margin = new Thickness(0, 0, 0, 10)
             });
         }
@@ -556,9 +699,51 @@ public partial class ConnectorWindow : Window
         CardsCard.Visibility = Visibility.Visible;
     }
 
+    /// <summary>Kuerzester brauchbare PIN-Gesamtzustand fuer das Abzeichen der Karte.</summary>
+    private static string? WorstPinState(ConnectorCard card)
+    {
+        if (card.PinStates.Count == 0)
+            return null;
+        if (card.PinStates.Any(p => p.IsBlocked))
+            return L("gesperrt", "blocked");
+        if (card.PinStates.Any(p => p.Error is not null))
+            return L("Pin-Status unklar", "PIN status unclear");
+        if (card.PinStates.Any(p => p.IsTransportPin))
+            return L("Transport-PIN", "transport PIN");
+        if (card.PinStates.All(p => p.IsVerified))
+            return L("verifiziert", "verified");
+        return L("nicht verifiziert", "not verified");
+    }
+
+    /// <summary>Kleines farbiges Abzeichen – flach, ohne Schatten, nur Rand und Text.</summary>
+    private Border Badge(string text, string? colorKey)
+    {
+        var label = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush(colorKey ?? "TextMuted"),
+            TextWrapping = TextWrapping.Wrap
+        };
+        return new Border
+        {
+            Child = label,
+            Background = colorKey is null ? Brush("ChipBackground") : Brush(colorKey + "Surface"),
+            BorderBrush = colorKey is null ? Brush("BorderSubtle") : Brush(colorKey + "Border"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(999),
+            Padding = new Thickness(9, 3, 9, 3)
+        };
+    }
+
     private UIElement BuildPinRow(ConnectorCard card, string pinType, ConnectorPinState? state)
     {
-        var row = new WrapPanel { Margin = new Thickness(0, 2, 0, 2) };
+        var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         string statusText;
         string color;
@@ -569,7 +754,9 @@ public partial class ConnectorWindow : Window
         }
         else if (state.Error is not null)
         {
-            statusText = L("Fehler: ", "Error: ") + state.Error;
+            // Der Konnektor-Fehler steht nicht mehr als XML-Block in der Maske, sondern
+            // nur als Klapptext. Der eigentliche Request landet im Protokollreiter.
+            statusText = L("Status nicht abrufbar", "status unavailable");
             color = "StatusOutage";
         }
         else
@@ -580,35 +767,51 @@ public partial class ConnectorWindow : Window
             color = state.IsVerified ? "StatusOk" : state.IsBlocked ? "StatusOutage" : "StatusPartial";
         }
 
-        row.Children.Add(new TextBlock
+        var name = new TextBlock
         {
-            Text = $"{pinType}: ",
+            Text = pinType,
+            FontSize = 12,
             FontWeight = FontWeights.SemiBold,
-            Foreground = Brush("TextMain"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 4, 0)
-        });
-        row.Children.Add(new TextBlock
+            Foreground = Brush("TextMuted"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(name, 0);
+        row.Children.Add(name);
+
+        var status = new TextBlock
         {
             Text = statusText,
+            FontSize = 12,
             Foreground = Brush(color),
             FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 16, 0),
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 420
-        });
+            TextWrapping = TextWrapping.Wrap
+        };
+        if (state?.Error is { Length: > 0 } error)
+        {
+            // Der lange Konnektor-Text – inklusive XML – gehoert nicht in die Maske. Er bleibt
+            // als Klapptext und im Protokollreiter erhalten, damit die Karte lesbar bleibt.
+            status.ToolTip = error;
+            status.Cursor = System.Windows.Input.Cursors.Help;
+        }
+        Grid.SetColumn(status, 1);
+        row.Children.Add(status);
 
         var blocked = state?.IsBlocked == true;
         var transport = state?.IsTransportPin == true;
 
+        // Im Objekth initializer faellt der Name rechts auf die Instanz-Eigenschaft zurueck – mit
+        // Typnamen qualifizieren, sonst greift CS0176.
+        var buttons = new WrapPanel { HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
         if (!blocked && !transport && state?.IsVerified != true)
-            row.Children.Add(ActionButton(L("PIN verifizieren", "Verify PIN"), async () => await PinActionAsync(card, pinType, "VerifyPin")));
+            buttons.Children.Add(ActionButton(L("PIN verifizieren", "Verify PIN"), async () => await PinActionAsync(card, pinType, "VerifyPin")));
         if (!blocked)
-            row.Children.Add(ActionButton(transport ? L("Transport-PIN ändern", "Change transport PIN") : L("PIN ändern", "Change PIN"),
+            buttons.Children.Add(ActionButton(transport ? L("Transport-PIN ändern", "Change transport PIN") : L("PIN ändern", "Change PIN"),
                 async () => await PinActionAsync(card, pinType, "ChangePin")));
         if (blocked || state?.LeftTries is <= 1)
-            row.Children.Add(ActionButton(L("Mit PUK entsperren", "Unblock with PUK"), async () => await PinActionAsync(card, pinType, "UnblockPin")));
+            buttons.Children.Add(ActionButton(L("Mit PUK entsperren", "Unblock with PUK"), async () => await PinActionAsync(card, pinType, "UnblockPin")));
+        Grid.SetColumn(buttons, 3);
+        row.Children.Add(buttons);
 
         return row;
     }
@@ -646,27 +849,51 @@ public partial class ConnectorWindow : Window
             var cardText = string.Join(" · ", cards);
             if (cardText.Length > 0) parts.Add(cardText);
 
-            TerminalsPanel.Children.Add(Line(
-                $"{(t.Connected == false ? "⚠" : "🖥")}  {t.Label}",
-                string.Join("   ·   ", parts),
-                t.Connected == false ? "StatusPartial" : null));
+            var body = new StackPanel();
+            var header = new Grid();
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // Detailblock nur, wenn die Info tatsaechlich da ist (liefert nur GetResourceInformation).
-            var extras = new List<string>();
-            if (!string.IsNullOrWhiteSpace(t.Details)) extras.Add(t.Details);
-            if (t.Workplaces.Count > 0)
-                extras.Add(L("Arbeitsplaetze: ", "Workplaces: ") + string.Join(", ", t.Workplaces));
-            if (extras.Count > 0)
+            var title = new TextBlock
             {
-                TerminalsPanel.Children.Add(new TextBlock
-                {
-                    Text = string.Join("   ·   ", extras),
-                    FontSize = 11,
-                    Foreground = Brush("TextMuted"),
-                    TextWrapping = TextWrapping.Wrap,
-                    Margin = new Thickness(0, 0, 0, 10)
-                });
-            }
+                Text = t.Label,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brush("TextMain"),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetColumn(title, 1);
+            header.Children.Add(title);
+
+            var stateBadge = Badge(state, t.Connected == false ? "StatusPartial" : "StatusOk");
+            stateBadge.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(stateBadge, 2);
+            header.Children.Add(stateBadge);
+            body.Children.Add(header);
+
+            // Technische Werte als Kapseln: zwei Terminals untereinander waeren eine halbe
+            // Bildschirmhohe, aneinandergereiht belegt es nur eine Zeile.
+            var chips = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            foreach (var part in parts)
+                chips.Children.Add(Chip(part, null));
+            if (!string.IsNullOrWhiteSpace(t.Details))
+                chips.Children.Add(Chip(t.Details, null));
+            if (t.Workplaces.Count > 0)
+                chips.Children.Add(Chip(L("Arbeitsplaetze: ", "Workplaces: ") + string.Join(", ", t.Workplaces), null));
+            body.Children.Add(chips);
+
+            TerminalsPanel.Children.Add(new Border
+            {
+                Child = body,
+                Background = Brush("ChipBackground"),
+                BorderBrush = Brush("BorderSubtle"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(16, 14, 16, 14),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
         }
         if (snapshot.Terminals.Count == 0)
             TerminalsPanel.Children.Add(new TextBlock { Text = L("Keine Kartenterminals gefunden.", "No card terminals found."), Foreground = Brush("TextMuted") });
@@ -679,45 +906,45 @@ public partial class ConnectorWindow : Window
         var services = snapshot.Directory?.Services ?? [];
         foreach (var group in services.GroupBy(s => s.Name).OrderBy(g => g.Key))
         {
-            ServicesPanel.Children.Add(new TextBlock
+            // Zwei Spalten: links Name und Version, rechts die Endpunkte. Die fruehere Bauart
+            // schrieb die Version mitten in die Kopfzeile und die Endpunkte darunter – dadurch
+            // liess sich nicht erkennen, welche Version zu welchem Pfad gehoert.
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 9) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var head = new StackPanel();
+            head.Children.Add(new TextBlock
             {
-                Text = $"{group.Key}  —  {string.Join(", ", group.Select(s => s.Version).Distinct())}",
+                Text = group.Key,
                 Foreground = Brush("TextMain"),
                 FontSize = 12,
-                Margin = new Thickness(0, 0, 0, 2)
+                FontWeight = FontWeights.SemiBold
             });
-            ServicesPanel.Children.Add(new TextBlock
+            head.Children.Add(new TextBlock
+            {
+                Text = string.Join(", ", group.Select(s => s.Version).Distinct()),
+                Foreground = Brush("TextMuted"),
+                FontSize = 11,
+                Margin = new Thickness(0, 1, 0, 0)
+            });
+            Grid.SetColumn(head, 0);
+            row.Children.Add(head);
+
+            var paths = new TextBlock
             {
                 Text = string.Join("\n", group.Select(s => s.Endpoint).Distinct()),
                 Foreground = Brush("TextMuted"),
                 FontFamily = new System.Windows.Media.FontFamily("Consolas"),
                 FontSize = 11,
-                Margin = new Thickness(0, 0, 0, 8),
                 TextWrapping = TextWrapping.Wrap
-            });
+            };
+            Grid.SetColumn(paths, 1);
+            row.Children.Add(paths);
+
+            ServicesPanel.Children.Add(row);
         }
         ServicesCard.Visibility = services.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private UIElement Line(string title, string detail, string? colorKey)
-    {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
-        panel.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = colorKey is null ? Brush("TextMain") : Brush(colorKey),
-            TextWrapping = TextWrapping.Wrap
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = detail,
-            FontSize = 12,
-            Foreground = Brush("TextMuted"),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 2, 0, 0)
-        });
-        return panel;
     }
 
     private System.Windows.Controls.Button ActionButton(string text, Func<Task> action)
@@ -1052,10 +1279,12 @@ public partial class ConnectorWindow : Window
             foreach (var w in s.Warnings)
                 sb.AppendLine("  " + w);
             if (s.Warnings.Any(w => w.Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase)))
-                sb.AppendLine("  Hinweis: 4000 Syntaxfehler bedeutet meist, dass der Konnektor eine ID im " +
-                              "Aufrufkontext ablehnt. Erlaubt sind A-Z, a-z, 0-9, - und _ (1–64 Zeichen);" +
-                              " Punkte, Leerzeichen oder zu viele Zeichen führen zu genau dieser Meldung. " +
-                              "Ein etwaig eingetragener Benutzer-ID bitte leer lassen, wenn nicht für HBA-Operationen benötigt.");
+                sb.AppendLine("  Hinweis: 4000 heisst nur, dass der Konnektor die Nachricht ablehnt – nicht womit. " +
+                              "Der Aufrufkontext ist bei allen Diensten gleich: antworten EventService oder " +
+                              "CertificateService mit denselben IDs, ist der Kontext als Ursache ausgeschlossen. " +
+                              "Bleibt als Kandidat der Inhalt der betroffenen Operation, zum Beispiel der Namespace " +
+                              "eines einzelnen Parameters. Bei 4003 fehlt eine zwingende Angabe – fuer " +
+                              "Kartensitzungen des HBA ist das regelmaessig die Benutzer-ID im Aufrufkontext.");
         }
         if (s.Subscriptions.Count > 0)
         {
@@ -1101,8 +1330,21 @@ public partial class ConnectorWindow : Window
             Dispatcher.BeginInvoke(Append);
     }
 
-    private void ShowWarning(string message) =>
-        System.Windows.MessageBox.Show(this, message, L("Konnektor", "Connector"), MessageBoxButton.OK, MessageBoxImage.Warning);
+    /// <summary>
+    /// Warnung als Dialog. Der gesendete XML-Rumpf wird dabei ausgeklammert – er gehoert ins
+    /// Protokoll und in den Bericht, nicht in einen Dialog, der den halben Bildschirm fuellt.
+    /// </summary>
+    private void ShowWarning(string message)
+    {
+        var head = message.Split('\n')[0].Trim();
+        var extra = message.Length > head.Length
+            ? L("\n\nAlle Einzelheiten inklusive des gesendeten Requests stehen im Reiter „Protokoll“ " +
+              "und im Diagnosebericht, den Sie mit „Bericht“ in die Zwischenablage kopieren.",
+              "\n\nEverything else, including the request that was sent, is in the \u201CProtocol\u201D tab and " +
+              "in the diagnostic report you can copy with \u201CReport\u201D.")
+            : "";
+        System.Windows.MessageBox.Show(this, head + extra, L("Konnektor", "Connector"), MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
 
     private System.Windows.Media.Brush Brush(string key) =>
         TryFindResource(key) as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Gray;
