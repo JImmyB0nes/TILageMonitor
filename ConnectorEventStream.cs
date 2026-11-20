@@ -176,13 +176,11 @@ public sealed class ConnectorEventStream : IDisposable
     {
         message = "";
         var text = pending.ToString();
-        const string envelopeClosing = "</Envelope>";
-        const string eventClosing = "</Event>";
 
-        var envelopeEnd = text.IndexOf(envelopeClosing, StringComparison.OrdinalIgnoreCase);
+        var envelopeEnd = IndexOfClosingTag(text, "Envelope");
         if (envelopeEnd >= 0)
         {
-            Cut(ref pending, text, envelopeEnd + envelopeClosing.Length, out message);
+            Cut(ref pending, text, envelopeEnd, out message);
             return true;
         }
 
@@ -193,19 +191,53 @@ public sealed class ConnectorEventStream : IDisposable
         // geschnitten – derselbe Fehler, den die fruehere Fassung am Innen-Tag beging.
         if (!HasOpeningEnvelope(text))
         {
-            var eventEnd = text.IndexOf(eventClosing, StringComparison.OrdinalIgnoreCase);
+            var eventEnd = IndexOfClosingTag(text, "Event");
             if (eventEnd < 0)
             {
                 Guard(ref pending, text);
                 return false;
             }
 
-            Cut(ref pending, text, eventEnd + eventClosing.Length, out message);
+            Cut(ref pending, text, eventEnd, out message);
             return true;
         }
 
         Guard(ref pending, text);
         return false;
+    }
+
+    /// <summary>
+    /// Sucht das schliessende Tag eines Elements, gleichgueltig mit welchem Namespace-Praefix.
+    /// </summary>
+    /// <remarks>
+    /// Ein starres Suchen auf "</Envelope>" ueberschlaegt "</soap:Envelope>", weil nach dem
+    /// schraegen Strich der Praefix kommt, nicht der Name. In der frueheren Fassung fiel das
+    /// am Innen-Tag auf, seit der Umstellung auf das aeussere Ende fehlt der Schluss-Treffer
+    /// bei praefixierter Huelle ganz: TakeMessage sieht nie ein Ende, der Puffer laeuft bis zur
+    /// Schutzkante und wird verworfen – Ereignisse verschwanden wieder lautlos, diesmal
+    /// dauerhaft. Gelesen wird deshalb der eigentliche Elementname, Praefix abgetrennt.
+    /// </remarks>
+    private static int IndexOfClosingTag(string text, string localName)
+    {
+        for (var at = text.IndexOf("</", StringComparison.Ordinal); at >= 0; at = text.IndexOf("</", at + 2, StringComparison.Ordinal))
+        {
+            var close = text.IndexOf('>', at);
+            if (close < 0)
+                return -1; // noch unvollstaendig – naechsten Lesedurchgang abwarten
+
+            var name = text[(at + 2)..close].Trim();
+            var colon = name.LastIndexOf(':');
+            if (colon >= 0)
+                name = name[(colon + 1)..];
+
+            if (name.Equals(localName, StringComparison.OrdinalIgnoreCase))
+                return close + 1;
+
+            // Ein anderes Element, zum Beispiel </CardEvent>, zaehlt nicht – sonst wurde das
+            // Innen-Tag erneut zum aeussersten Ende erklaert.
+        }
+
+        return -1;
     }
 
     /// <summary>
