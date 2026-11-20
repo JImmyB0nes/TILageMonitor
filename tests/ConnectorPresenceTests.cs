@@ -138,6 +138,8 @@ public sealed class ConnectorPresenceTests
     {
         // Dieselbe Angabe, die jetzt in der Verbindungsmaske steht, statt nur im Bericht.
         var xml = """
+            <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+              <soap:Body>
             <EVT:GetSubscriptionResponse xmlns:EVT="http://ws.gematik.de/conn/EventService/v7.2"
                                          xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0">
               <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
@@ -155,6 +157,8 @@ public sealed class ConnectorPresenceTests
                 </EVT:Subscription>
               </EVT:Subscriptions>
             </EVT:GetSubscriptionResponse>
+              </soap:Body>
+            </soap:Envelope>
             """;
 
         var subs = ConnectorProtocol.ParseSubscriptions(ConnectorProtocol.ParseBody(xml));
