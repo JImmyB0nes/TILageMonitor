@@ -496,7 +496,7 @@ public partial class ConnectorWindow : Window
             more.Content = new TextBlock
             {
                 Text = string.Join("\n", lines.Skip(1)).Trim(),
-                FontFamily = new FontFamily("Consolas"),
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
                 FontSize = 11,
                 Foreground = Brush("TextMuted"),
                 TextWrapping = TextWrapping.Wrap
@@ -800,7 +800,9 @@ public partial class ConnectorWindow : Window
         var blocked = state?.IsBlocked == true;
         var transport = state?.IsTransportPin == true;
 
-        var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
+        // Im Objekth initializer faellt der Name rechts auf die Instanz-Eigenschaft zurueck – mit
+        // Typnamen qualifizieren, sonst greift CS0176.
+        var buttons = new WrapPanel { HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
         if (!blocked && !transport && state?.IsVerified != true)
             buttons.Children.Add(ActionButton(L("PIN verifizieren", "Verify PIN"), async () => await PinActionAsync(card, pinType, "VerifyPin")));
         if (!blocked)
