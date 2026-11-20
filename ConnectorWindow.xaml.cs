@@ -25,7 +25,10 @@ public partial class ConnectorWindow : Window
         LoadForm(owner.GetSettingsSnapshot().Connector);
         Closed += (_, _) =>
         {
-            try { _cts?.Cancel(); } catch { /* ignore */ }
+            // Das Abonnement haelt das Fenster ueber den Monitor lebendig, und der Rueckruf
+            // wuerde nach dem Schliessen in eine verworfene Maske zeichnen.
+            _ownerMain.ConnectorMonitor.Updated -= OnMonitorUpdated;
+            try { _cts?.Cancel(); _cts?.Dispose(); _cts = null; } catch { /* ignore */ }
         };
 
         // Der Reiter ist der tragende Teil, die Seitenleiste bildet ihn ab – auch dann, wenn
@@ -53,6 +56,31 @@ public partial class ConnectorWindow : Window
                 Tabs.SelectedItem = ConnectionTab;
             }
         };
+
+        // Der Hintergrundpollen war die einzige Quelle, die dieses Fenster nicht erreichte: die
+        // Maske zeigte denselben Stand, bis man selbst aktualisierte, waehrend der Knopf im
+        // Hauptfenster laengst umgesprungen war. Dasselbe Bild, nur ohne eigenen Abruf.
+        _ownerMain.ConnectorMonitor.Updated += OnMonitorUpdated;
+    }
+
+    /// <summary>Zeichnet den Stand der Hintergrundueberwachung nach, ohne selbst abzurufen.</summary>
+    private void OnMonitorUpdated()
+    {
+        void Apply()
+        {
+            // Waehrend einer laufenden Aktion bleibt die Maske stehen, sonst faellt sie mitten
+            // im Dialog um – und die Knopfe, die gerade geklemmt haben, werden neu gebaut.
+            if (_busy)
+                return;
+            var latest = _ownerMain.ConnectorMonitor.LastSnapshot;
+            if (latest is not null && !ReferenceEquals(latest, _snapshot))
+                Render(latest);
+        }
+
+        if (Dispatcher.CheckAccess())
+            Apply();
+        else
+            Dispatcher.BeginInvoke(Apply);
     }
 
     private static string L(string de, string en) => LocalizationService.Pick(de, en);
@@ -306,6 +334,7 @@ public partial class ConnectorWindow : Window
 
         SetBusy(true, L("Verbinde mit Konnektor …", "Connecting to connector …"));
         _cts?.Cancel();
+        _cts?.Dispose();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
 
@@ -1431,7 +1460,22 @@ public partial class ConnectorWindow : Window
             SetBusy(false);
         }
         Render(_snapshot);
-        _ownerMain.ConnectorMonitor.Accept(_snapshot);
+        PublishToMonitor();
+    }
+
+    /// <summary>
+    /// Uebertraegt den gezeichneten Stand an die Hintergrundueberwachung, damit Knopf, Tray
+    /// und Alarme dasselbe Bild haben. Laengst ueberholt? Dann bleibt der exactly-neuere
+    /// Stand stehen: ein Accept des eigenen aelteren Datenstandes drehte die frischeren
+    /// Anzeigen zurueck und schrieb denselben ueber den Konnektor-Verlauf.
+    /// </summary>
+    private void PublishToMonitor()
+    {
+        if (_snapshot is null)
+            return;
+        var current = _ownerMain.ConnectorMonitor.LastSnapshot;
+        if (current is null || ReferenceEquals(current, _snapshot))
+            _ownerMain.ConnectorMonitor.Accept(_snapshot);
     }
 
     /// <summary>
@@ -1518,7 +1562,7 @@ public partial class ConnectorWindow : Window
         }
 
         Render(_snapshot);
-        _ownerMain.ConnectorMonitor.Accept(_snapshot);
+        PublishToMonitor();
     }
 
     private async Task VerifyCertificateAsync(ConnectorCard card)
@@ -1641,13 +1685,18 @@ public partial class ConnectorWindow : Window
         sb.AppendLine("Konfiguration: " + ConnectorConfigurationDiff.DescribeLastChange());
         var history = ConnectorHistoryStore.Load();
         var keys = history.Hours.Select(h => h.HourKey).Distinct(StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        // Ein krummer HourKey aus einer halbbeschadigten Datei darf den Bericht nicht umbringen –
+        // der Store selbst liest dieselbe Angabe mit einer Kante ab.
         sb.AppendLine(keys.Count > 0
-            ? $"Konnektor-Verlauf: {keys.Count} Stunden erfasst ({keys.First()[..13]} bis {keys.Last()[..13]})"
+            ? $"Konnektor-Verlauf: {keys.Count} Stunden erfasst ({ShortHour(keys.First())} bis {ShortHour(keys.Last())})"
             : "Konnektor-Verlauf: noch keine Stunde erfasst – dafuer nur, was der Konnektor selbst meldet.");
         foreach (var a in ConnectorHealth.Evaluate(s, settings.CertificateWarningDays, DateTime.Now))
             sb.AppendLine($"Hinweis [{a.Urgency}]: {a.Title} – {a.Body}");
         return sb.ToString();
     }
+
+    /// <summary>Kantige Kurzfassung eines HourKeys, damit ein krummer Wert den Bericht nicht umbringt.</summary>
+    private static string ShortHour(string key) => key.Length <= 13 ? key : key[..13];
 
     private void SetBusy(bool busy, string? text = null)
     {
