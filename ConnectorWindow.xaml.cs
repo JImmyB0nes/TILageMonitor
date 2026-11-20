@@ -711,7 +711,7 @@ public partial class ConnectorWindow : Window
         {
             Background = AccentForState(worstPin),
             CornerRadius = new CornerRadius(3, 0, 0, 3),
-            Margin = new Thickness(0, 2)
+            Margin = new Thickness(0, 2, 0, 2)
         };
         Grid.SetColumn(edge, 0);
         grid.Children.Add(edge);
@@ -847,7 +847,7 @@ public partial class ConnectorWindow : Window
             metaRow.Children.Add(Chip(part, null));
         CardDetailPanel.Children.Add(metaRow);
 
-        CardDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12) });
+        CardDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12, 0, 12) });
 
         var pinTitle = new TextBlock
         {
@@ -917,7 +917,7 @@ public partial class ConnectorWindow : Window
         => BrushStatic(StateColorKey(worstPin));
 
     private static System.Windows.Media.Brush BrushStatic(string key)
-        => (System.Windows.Media.Brush)Application.Current.Resources[key];
+        => (System.Windows.Media.Brush)System.Windows.Application.Current.Resources[key];
 
     /// <summary>Kuerzester brauchbare PIN-Gesamtzustand fuer das Abzeichen der Karte.</summary>
     private static string? WorstPinState(ConnectorCard card)
@@ -1087,7 +1087,7 @@ public partial class ConnectorWindow : Window
         {
             Background = Brush(t.Connected == false ? "StatusPartial" : "StatusOk"),
             CornerRadius = new CornerRadius(3, 0, 0, 3),
-            Margin = new Thickness(0, 2)
+            Margin = new Thickness(0, 2, 0, 2)
         };
         Grid.SetColumn(edge, 0);
         grid.Children.Add(edge);
@@ -1187,7 +1187,7 @@ public partial class ConnectorWindow : Window
             TerminalDetailPanel.Children.Add(chips);
         }
 
-        TerminalDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12) });
+        TerminalDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12, 0, 12) });
 
         var cardTitle = new TextBlock
         {
@@ -1213,7 +1213,7 @@ public partial class ConnectorWindow : Window
         foreach (var card in CardOrder(cards))
         {
             var worstPin = WorstPinState(card);
-            var row = new Grid { Margin = new Thickness(0, 4) };
+            var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
