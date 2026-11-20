@@ -252,7 +252,7 @@
         <!-- ============================ Reiter ============================ -->
         <TabControl x:Name="Tabs" Grid.Row="2" Style="{StaticResource TabHostStyle}">
 
-            <!-- ---------------------- Übersicht ---------------------- -->
+            <!-- ====================== Übersicht ====================== -->
             <TabItem Header="Übersicht" Style="{StaticResource PillTabStyle}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
@@ -275,7 +275,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- ------------------------ Karten ------------------------ -->
+            <!-- ======================== Karten ======================== -->
             <TabItem Header="Karten" Style="{StaticResource PillTabStyle}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
@@ -291,7 +291,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- ---------------------- Terminals ---------------------- -->
+            <!-- ====================== Terminals ====================== -->
             <TabItem Header="Terminals" Style="{StaticResource PillTabStyle}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
@@ -305,7 +305,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- --------------------- Verbindung --------------------- -->
+            <!-- ===================== Verbindung ===================== -->
             <TabItem x:Name="ConnectionTab" Header="Verbindung" Style="{StaticResource PillTabStyle}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
@@ -525,7 +525,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- ----------------------- Dienste ----------------------- -->
+            <!-- ======================= Dienste ======================= -->
             <TabItem Header="Dienste" Style="{StaticResource PillTabStyle}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <Border x:Name="ServicesCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
@@ -539,7 +539,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- ---------------------- Protokoll ---------------------- -->
+            <!-- ====================== Protokoll ====================== -->
             <TabItem Header="Protokoll" Style="{StaticResource PillTabStyle}">
                 <Border Style="{StaticResource PanelStyle}">
                     <DockPanel>
