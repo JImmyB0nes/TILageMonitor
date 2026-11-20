@@ -61,6 +61,18 @@ public sealed class ConnectorSettings
     [JsonPropertyName("monitoringEnabled")]
     public bool MonitoringEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Ereignis-Abos (Subscribe) statt nur Pollen. Der Konnektor meldet dann Karte rein/raus
+    /// und Terminal getrennt sofort. Schlaegt das Abo fehl, faellt die App automatisch
+    /// zurueck auf das normale Intervall.
+    /// </summary>
+    [JsonPropertyName("eventSubscriptionsEnabled")]
+    public bool EventSubscriptionsEnabled { get; set; } = true;
+
+    /// <summary>Lokaler Verlauf der Konnektor-Staenden (14 Tage) fuer Timeline und Stoerdauer.</summary>
+    [JsonPropertyName("historyEnabled")]
+    public bool HistoryEnabled { get; set; } = true;
+
     [JsonPropertyName("pollMinutes")]
     public int PollMinutes { get; set; } = 5;
 

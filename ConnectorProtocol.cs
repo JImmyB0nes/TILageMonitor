@@ -17,11 +17,32 @@ public static class ConnectorProtocol
     public static readonly XNamespace Conn = "http://ws.gematik.de/conn/ConnectorCommon/v5.0";
     public static readonly XNamespace Cctx = "http://ws.gematik.de/conn/ConnectorContext/v2.0";
     public static readonly XNamespace CertCmn = "http://ws.gematik.de/conn/CertificateServiceCommon/v2.0";
+    public static readonly XNamespace Pi = "http://ws.gematik.de/int/version/ProductInformation/v1.1";
 
     // Fallback-Namespaces, falls das Dienstverzeichnis keine TargetNamespaces liefert.
     public const string DefaultEventServiceNs = "http://ws.gematik.de/conn/EventService/v7.2";
     public const string DefaultCardServiceNs = "http://ws.gematik.de/conn/CardService/v8.1";
     public const string DefaultCertificateServiceNs = "http://ws.gematik.de/conn/CertificateService/v6.0";
+
+    /// <summary>
+    /// Zertifikatsreferenzen laut CertificateServiceCommon.xsd (CertRefEnum). Mehr gibt die
+    /// Spezifikation nicht her – die App bleibt bei dieser Liste, damit unbekannte Refs nicht
+    /// als Fehler erscheinen.
+    /// </summary>
+    public static readonly (string Ref, string Label)[] KnownCertRefs =
+    [
+        ("C.AUT", "Autentisierung (SMC-B)"),
+        ("C.ENC", "Verschluesselung"),
+        ("C.SIG", "Signatur (nicht qualifiziert)"),
+        ("C.QES", "Qualifizierte Signatur")
+    ];
+
+    /// <summary>
+    /// Topics, fuer die ein Abo angelegt wird. Die Schreibweise folgt der Konvention
+    /// "Dienst-Namespace#Ereignis" aus gemSpec_Kon; nicht jede Firmware kennt alle.
+    /// Nicht unterstuetzte Topics fuehren zu einem Teilfehler, nicht zum Abbruch.
+    /// </summary>
+    public static string EventTopic(string serviceNs, string name) => $"{serviceNs}#{name}";
 
     /// <summary>OID der Admission-Extension (ISIS-MTT/Common PKI), enthält die Telematik-ID.</summary>
     public const string AdmissionOid = "1.3.36.8.3.3";
@@ -137,6 +158,58 @@ public static class ConnectorProtocol
 
     public static XElement GetResourceInformation(XNamespace evt, ConnectorSettings s) =>
         new(evt + "GetResourceInformation", Context(s));
+
+    /// <summary>
+    /// Abo auf Konnektor-Ereignisse. Der Konnektor baut die Verbindung zum Client auf
+    /// (cetp://), der Client muss also einen TCP-Listener auf dieser Adresse halten.
+    /// </summary>
+    public static XElement Subscribe(XNamespace evt, ConnectorSettings s, string eventTo, string topic, string? filter = null, string? subscriptionId = null)
+    {
+        var subscription = new XElement(evt + "Subscription");
+        if (!string.IsNullOrWhiteSpace(subscriptionId))
+            subscription.Add(new XElement(evt + "SubscriptionID", subscriptionId.Trim()));
+        subscription.Add(new XElement(evt + "EventTo", eventTo.Trim()));
+        subscription.Add(new XElement(evt + "Topic", topic.Trim()));
+        if (!string.IsNullOrWhiteSpace(filter))
+            subscription.Add(new XElement(evt + "Filter", filter.Trim()));
+        return new XElement(evt + "Subscribe", Context(s), subscription);
+    }
+
+    public static XElement GetSubscription(XNamespace evt, ConnectorSettings s, bool mandantWide = false, string? subscriptionId = null)
+    {
+        var element = new XElement(evt + "GetSubscription", new XAttribute("mandant-wide", mandantWide ? "true" : "false"), Context(s));
+        if (!string.IsNullOrWhiteSpace(subscriptionId))
+            element.Add(new XElement(evt + "SubscriptionID", subscriptionId.Trim()));
+        return element;
+    }
+
+    public static XElement Unsubscribe(XNamespace evt, ConnectorSettings s, string subscriptionId) =>
+        new(evt + "Unsubscribe", Context(s), new XElement(evt + "SubscriptionID", subscriptionId.Trim()));
+
+    /// <summary>
+    /// Prueft, ob der aktuelle Aufrufkontext ueberhaupt fuer eine bestimmte Berechtigung offen
+    /// steht. Ohne AccessPrivilege ist das eine reine Leseabfrage ohne PIN-Beruehrung.
+    /// </summary>
+    public static XElement IsContextAvailable(XNamespace card, ConnectorSettings s, string? accessPrivilege = null)
+    {
+        var element = new XElement(card + "IsContextAvailable", Context(s));
+        if (!string.IsNullOrWhiteSpace(accessPrivilege))
+            element.Add(new XElement(Conn + "AccessPrivilege", accessPrivilege.Trim()));
+        return element;
+    }
+
+    /// <summary>
+    /// Prueft eine concrete Karte gegenueber einer Berechtigung. ACHTUNG: Je nach Firmware und
+    /// PIN-Status loest das eine Verifizierungsabfrage am Terminal aus – deshalb nie im Polling,
+    /// sondern nur auf ausdruecklichen Knopfdruck.
+    /// </summary>
+    public static XElement VerifyCard(XNamespace card, ConnectorSettings s, string cardHandle, string? accessPrivilege = null)
+    {
+        var element = new XElement(card + "VerifyCard", Context(s), new XElement(Conn + "CardHandle", cardHandle));
+        if (!string.IsNullOrWhiteSpace(accessPrivilege))
+            element.Add(new XElement(Conn + "AccessPrivilege", accessPrivilege.Trim()));
+        return element;
+    }
 
     public static XElement GetPinStatus(XNamespace card, ConnectorSettings s, string cardHandle, string pinType) =>
         new(card + "GetPinStatus", Context(s), new XElement(Conn + "CardHandle", cardHandle), new XElement(card + "PinTyp", pinType));
@@ -311,9 +384,73 @@ public static class ConnectorProtocol
                 MacAddress = Value(t, "MacAddress"),
                 Slots = Int(Value(t, "Slots")),
                 IsPhysical = Bool(Value(t, "IS_PHYSICAL")),
-                Connected = Bool(Value(t, "Connected"))
+                Connected = Bool(Value(t, "Connected")),
+                // GetResourceInformation liefert pro Terminal die komplette ProductInformation
+                // (Hersteller, Produkt, HW-/FW-Version) – GetCardTerminals nicht, deshalb hier lesen.
+                Workplaces = Descendants(t, "WorkplaceId").Select(w => w.Value.Trim()).Where(w => w.Length > 0).Distinct().ToList(),
+                VendorName = Value(t, "ProductVendorName"),
+                ProductName = Value(t, "ProductName"),
+                ProductClass = Value(t, "ProductClass"),
+                HardwareVersion = Value(t, "HWVersion"),
+                FirmwareVersion = Value(t, "FWVersion")
             })
             .ToList();
+
+    /// <summary>Aktive Ereignis-Abos aus GetSubscription.</summary>
+    public static List<ConnectorSubscription> ParseSubscriptions(XElement response) =>
+        Descendants(response, "Subscription")
+            .Where(s => s.Elements().Any(e => e.Name.LocalName == "SubscriptionID"))
+            .Select(s => new ConnectorSubscription
+            {
+                SubscriptionId = Value(s, "SubscriptionID"),
+                Topic = Value(s, "Topic"),
+                EventTo = Value(s, "EventTo"),
+                Filter = Value(s, "Filter"),
+                TerminationTime = Date(Value(s, "TerminationTime"))
+            })
+            .ToList();
+
+    /// <summary>
+    /// Ein hereinkommendes Ereignis (Konnektor -> Client, "cetp://"). Gelesen wird rein nach
+    /// Lokalen Elementnamen, damit Topic- und Namespace-Varianten nicht zu leeren Zeilen fuehren.
+    /// </summary>
+    public static ConnectorEvent? ParseEvent(string xml)
+    {
+        XDocument doc;
+        try
+        {
+            doc = XDocument.Parse(xml);
+        }
+        catch
+        {
+            return null;
+        }
+
+        var root = doc.Root;
+        if (root is null)
+            return null;
+
+        // Erlaubt ist sowohl eine einzelne Ereignis-Nachricht als auch eine SOAP-Huelle.
+        var element = Descendants(root, "Event").FirstOrDefault() ?? root;
+        var parameters = Descendants(element, "Parameter")
+            .ToDictionary(
+                p => Value(p, "Key"),
+                p => Value(p, "Value"),
+                StringComparer.Ordinal);
+
+        var topic = Value(element, "Topic");
+        if (string.IsNullOrWhiteSpace(topic))
+            return null;
+
+        return new ConnectorEvent
+        {
+            Topic = topic,
+            Type = Value(element, "Type"),
+            Severity = Value(element, "Severity"),
+            SubscriptionId = Value(element, "SubscriptionID"),
+            Parameters = parameters
+        };
+    }
 
     public static ConnectorResourceInfo ParseResourceInformation(XElement response)
     {
@@ -385,6 +522,23 @@ public static class ConnectorProtocol
             Result = Value(response, "VerificationResult"),
             Roles = Descendants(response, "Role").Select(r => r.Value.Trim()).Where(r => r.Length > 0).ToList()
         };
+
+    /// <summary>
+    /// Liest die Antwort von IsContextAvailable bzw. VerifyCard. Beide liefern eine
+    /// Ergebniszeichenkette und eventuelle Rollen; IsContextAvailable kennent den booleschen
+    /// Wert zusaetzlich, VerifyCard nicht – deshalb wird beides eingelesen und der Aufrufer
+    /// wertet die Reihenfolge nach Vorrang aus.
+    /// </summary>
+    public static ConnectorAccessCheck ParseAccessCheck(XElement response)
+    {
+        var flag = Descendants(response, "IsContextAvailable").FirstOrDefault()?.Value;
+        return new ConnectorAccessCheck
+        {
+            Result = FirstNonEmpty(Value(response, "VerificationResult"), Value(response, "Result"), Value(response, "AccessCheckResult")),
+            IsAvailable = flag is null ? null : flag.Trim().Equals("true", StringComparison.OrdinalIgnoreCase),
+            Roles = Descendants(response, "Role").Select(r => r.Value.Trim()).Where(r => r.Length > 0).ToList()
+        };
+    }
 
     // ------------------------------------------------------------------
     // Zertifikate

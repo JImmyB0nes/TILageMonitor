@@ -63,6 +63,9 @@ public partial class ConnectorWindow : Window
         RewriteHostToggle.IsChecked = s.RewriteEndpointHost;
         EnabledToggle.IsChecked = s.Enabled || !s.IsConfigured;
         MonitoringToggle.IsChecked = s.MonitoringEnabled;
+        EventSubscriptionsToggle.IsChecked = s.EventSubscriptionsEnabled;
+        HistoryToggle.IsChecked = s.HistoryEnabled;
+        EventStreamInfo.Text = _ownerMain.ConnectorMonitor.DescribeEventStream();
         PollMinutesBox.Text = s.PollMinutes.ToString(CultureInfo.InvariantCulture);
         CertWarnDaysBox.Text = s.CertificateWarningDays.ToString(CultureInfo.InvariantCulture);
         CertPasswordHint.Text = string.IsNullOrEmpty(s.ClientCertificatePasswordProtected) ? "" : L("gespeichert", "saved");
@@ -84,6 +87,8 @@ public partial class ConnectorWindow : Window
         current.RewriteEndpointHost = RewriteHostToggle.IsChecked == true;
         current.Enabled = EnabledToggle.IsChecked == true;
         current.MonitoringEnabled = MonitoringToggle.IsChecked == true;
+        current.EventSubscriptionsEnabled = EventSubscriptionsToggle.IsChecked == true;
+        current.HistoryEnabled = HistoryToggle.IsChecked == true;
         if (int.TryParse(PollMinutesBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var poll))
             current.PollMinutes = Math.Clamp(poll, 1, 120);
         if (int.TryParse(CertWarnDaysBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days))
@@ -480,8 +485,20 @@ public partial class ConnectorWindow : Window
             if (card.IsEgk && !string.IsNullOrWhiteSpace(card.Kvnr)) details.Add($"KVNR: {card.Kvnr}");
 
             var cert = card.AuthCertificate;
-            var expiry = cert?.NotAfter ?? card.CertificateExpirationDate;
-            if (expiry is { } notAfter)
+            // Alle gelesenen Refs (C.AUT/C.ENC/C.SIG/C.QES) nebeneinander – so faellt ein
+            // abgelaufenes QES sofort auf, auch wenn C.AUT noch monatelang gueltig ist.
+            if (card.Certificates.Count > 0)
+            {
+                foreach (var c in card.Certificates.OrderBy(c => c.CertRef, StringComparer.Ordinal))
+                {
+                    var days = (int)Math.Floor((c.NotAfter - DateTime.Now).TotalDays);
+                    var label = ConnectorProtocol.KnownCertRefs.FirstOrDefault(k => k.Ref == c.CertRef).Label;
+                    details.Add(L($"{c.CertRef} bis {c.NotAfter:dd.MM.yyyy} ({days} Tage)", $"{c.CertRef} until {c.NotAfter:yyyy-MM-dd} ({days} days)"));
+                    if (!string.IsNullOrWhiteSpace(label) && days <= 0)
+                        details.Add(label);
+                }
+            }
+            else if (card.EarliestCertificateExpiry is { } notAfter)
             {
                 var days = (int)Math.Floor((notAfter - DateTime.Now).TotalDays);
                 details.Add(L($"Zertifikat gültig bis {notAfter:dd.MM.yyyy} ({days} Tage)", $"Certificate valid until {notAfter:yyyy-MM-dd} ({days} days)"));
@@ -512,7 +529,12 @@ public partial class ConnectorWindow : Window
                 var actions = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
                 if (cert is not null)
                     actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card)));
+                actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card)));
                 actions.Children.Add(ActionButton(L("PIN-Status neu lesen", "Re-read PIN status"), async () => await RefreshPinStatusAsync(card)));
+                // Freigabepruefung nur auf Knopfdruck: VerifyCard kann je nach Firmware eine
+                // PIN-Abfrage am Terminal ausloesen, was im Hintergrundpolling unangenehme
+                // Folgen haette (Terminal sperrt sich, wenn jemand die PIN nicht kennt).
+                actions.Children.Add(ActionButton(L("Freigabe prüfen (VSDM)", "Check access (VSDM)"), async () => await CheckAccessAsync(card)));
                 panel.Children.Add(actions);
             }
 
@@ -625,9 +647,26 @@ public partial class ConnectorWindow : Window
             if (cardText.Length > 0) parts.Add(cardText);
 
             TerminalsPanel.Children.Add(Line(
-                $"{(t.Connected == false ? "⚠" : "🖥")}  {(string.IsNullOrWhiteSpace(t.Name) ? t.CtId : t.Name)}  ({t.CtId})",
+                $"{(t.Connected == false ? "⚠" : "🖥")}  {t.Label}",
                 string.Join("   ·   ", parts),
                 t.Connected == false ? "StatusPartial" : null));
+
+            // Detailblock nur, wenn die Info tatsaechlich da ist (liefert nur GetResourceInformation).
+            var extras = new List<string>();
+            if (!string.IsNullOrWhiteSpace(t.Details)) extras.Add(t.Details);
+            if (t.Workplaces.Count > 0)
+                extras.Add(L("Arbeitsplaetze: ", "Workplaces: ") + string.Join(", ", t.Workplaces));
+            if (extras.Count > 0)
+            {
+                TerminalsPanel.Children.Add(new TextBlock
+                {
+                    Text = string.Join("   ·   ", extras),
+                    FontSize = 11,
+                    Foreground = Brush("TextMuted"),
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 10)
+                });
+            }
         }
         if (snapshot.Terminals.Count == 0)
             TerminalsPanel.Children.Add(new TextBlock { Text = L("Keine Kartenterminals gefunden.", "No card terminals found."), Foreground = Brush("TextMuted") });
@@ -822,6 +861,93 @@ public partial class ConnectorWindow : Window
         _ownerMain.ConnectorMonitor.Accept(_snapshot);
     }
 
+    /// <summary>
+    /// Fragt den Konnektor, ob fuer diese Karte die Berechtigung VSDM vorliegt. Zuerst wird
+    /// IsContextAvailable gelesen (unschaedlich); liefert der Konnektor dazu nichts, wird auf
+    /// VerifyCard umgestiegen – das kann dann aber eine PIN-Abfrage am Terminal ausloesen.
+    /// </summary>
+    private async Task CheckAccessAsync(ConnectorCard card)
+    {
+        SetBusy(true, L("Prüfe Freigabe …", "Checking access …"));
+        try
+        {
+            using var client = CreateClient();
+            ConnectorAccessCheck check;
+            var via = L("IsContextAvailable", "IsContextAvailable");
+            try
+            {
+                check = await client.IsContextAvailableAsync("VSDM", CancellationToken.None);
+                if (check.Granted is null && check.Roles.Count == 0)
+                {
+                    via = L("VerifyCard", "VerifyCard");
+                    check = await client.VerifyCardAsync(card.CardHandle, "VSDM", CancellationToken.None);
+                }
+            }
+            catch (ConnectorFaultException)
+            {
+                via = L("VerifyCard", "VerifyCard");
+                check = await client.VerifyCardAsync(card.CardHandle, "VSDM", CancellationToken.None);
+            }
+
+            var text = check.Granted switch
+            {
+                true => L("VSDM-Freigabe liegt vor ✓", "VSDM access is granted ✓"),
+                false => L("VSDM-Freigabe NICHT erteilt – die Karte darf fuer VSDM nicht verwendet werden.", "VSDM access is NOT granted – the card must not be used for VSDM."),
+                _ => L("Der Konnektor aeussert sich nicht eindeutig zur Freigabe.", "The connector does not give a clear answer about the access.")
+            };
+            if (!string.IsNullOrWhiteSpace(check.Result))
+                text += "\n" + L("Ergebnis: ", "Result: ") + check.Result;
+            if (check.Roles.Count > 0)
+                text += "\n" + L("Rollen: ", "Roles: ") + string.Join(", ", check.Roles);
+            text += "\n\n" + L("Quelle: ", "Source: ") + via;
+
+            Log($"{card.DisplayName}: VSDM-Freigabe {check.Granted?.ToString() ?? "unbestimmt"} ({via})");
+            System.Windows.MessageBox.Show(this, $"{card.DisplayName}\n\n{text}",
+                L("Freigabe-Prüfung", "Access check"), MessageBoxButton.OK,
+                check.Granted == true ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            Log("✖ " + ex.Message);
+            ShowWarning(DescribeException(ex));
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// Liest alle vier nach CertRefEnum moeglichen Zertifikate und traegt sie in die Karte ein.
+    /// Refs, die die Karte nicht fuehrt, bleiben leer – das ist kein Fehler.
+    /// </summary>
+    private async Task ReadAllCertificatesAsync(ConnectorCard card)
+    {
+        if (_snapshot is null)
+            return;
+        SetBusy(true, L("Lese Kartenzertifikate …", "Reading card certificates …"));
+        try
+        {
+            using var client = CreateClient();
+            var certificates = await client.ReadAllCertificatesAsync(card.CardHandle, CancellationToken.None);
+            card.Certificates = certificates;
+            card.AuthCertificate = certificates.FirstOrDefault(c => c.RefEquals("C.AUT")) ?? card.AuthCertificate;
+            Log($"{card.DisplayName}: {certificates.Count} Zertifikat(e) – {string.Join(", ", certificates.Select(c => c.CertRef))}");
+        }
+        catch (Exception ex)
+        {
+            Log("✖ " + ex.Message);
+            ShowWarning(DescribeException(ex));
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+
+        Render(_snapshot);
+        _ownerMain.ConnectorMonitor.Accept(_snapshot);
+    }
+
     private async Task VerifyCertificateAsync(ConnectorCard card)
     {
         if (card.AuthCertificate is null)
@@ -898,11 +1024,20 @@ public partial class ConnectorWindow : Window
         sb.AppendLine();
         sb.AppendLine("Kartenterminals:");
         foreach (var t in s.Terminals)
-            sb.AppendLine($"  {t.CtId} {t.Name} IP {t.IpAddress} MAC {t.MacAddress} verbunden={t.Connected}");
+        {
+            sb.Append($"  {t.CtId} {t.Name} IP {t.IpAddress} MAC {t.MacAddress} verbunden={t.Connected}");
+            if (!string.IsNullOrWhiteSpace(t.Details))
+                sb.Append($"  [{t.Details}]");
+            if (t.Workplaces.Count > 0)
+                sb.Append($"  AP {string.Join(",", t.Workplaces)}");
+            sb.AppendLine();
+        }
         sb.AppendLine("Karten:");
         foreach (var c in s.Cards)
         {
             sb.Append($"  {c.CardType} {c.CardHolderName} ICCSN {c.Iccsn} @ {c.CtId}/{c.SlotId}");
+            if (c.Certificates.Count > 0)
+                sb.Append(" [").Append(string.Join(", ", c.Certificates.Select(c => $"{c.CertRef} bis {c.NotAfter:dd.MM.yyyy}"))).Append(']');
             if ((c.AuthCertificate?.NotAfter ?? c.CertificateExpirationDate) is { } exp)
                 sb.Append($" gültig bis {exp:dd.MM.yyyy}");
             if (c.AuthCertificate?.TelematikId is { } tid)
@@ -922,6 +1057,13 @@ public partial class ConnectorWindow : Window
                               " Punkte, Leerzeichen oder zu viele Zeichen führen zu genau dieser Meldung. " +
                               "Ein etwaig eingetragener Benutzer-ID bitte leer lassen, wenn nicht für HBA-Operationen benötigt.");
         }
+        if (s.Subscriptions.Count > 0)
+        {
+            sb.AppendLine("Ereignis-Abos:");
+            foreach (var sub in s.Subscriptions)
+                sb.AppendLine($"  {sub.SubscriptionId}  {sub.Topic}  ->  {sub.EventTo}");
+        }
+        sb.AppendLine("Konfiguration: " + ConnectorConfigurationDiff.DescribeLastChange());
         foreach (var a in ConnectorHealth.Evaluate(s, settings.CertificateWarningDays, DateTime.Now))
             sb.AppendLine($"Hinweis [{a.Urgency}]: {a.Title} – {a.Body}");
         return sb.ToString();

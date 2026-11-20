@@ -296,6 +296,55 @@ public sealed class ConnectorClient : IDisposable
         ConnectorProtocol.ParseResourceInformation(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
             ns => ConnectorProtocol.GetResourceInformation(ns, _settings), "GetResourceInformation", null, ct));
 
+    // ------------------------------------------------------------------
+    // Ereignisabos
+    // ------------------------------------------------------------------
+
+    /// <summary>Abo anlegen. Der Konnektor baut danach eine TCP-Verbindung zu eventTo auf.</summary>
+    public async Task<(string SubscriptionId, DateTime? TerminationTime)> SubscribeAsync(string eventTo, string topic, CancellationToken ct)
+    {
+        var response = await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+            ns => ConnectorProtocol.Subscribe(ns, _settings, eventTo, topic), "Subscribe", null, ct);
+        var id = response.Elements().FirstOrDefault(e => e.Name.LocalName == "SubscriptionID")?.Value.Trim() ?? "";
+        var termination = response.Elements().FirstOrDefault(e => e.Name.LocalName == "TerminationTime");
+        DateTime? until = null;
+        if (termination is not null && DateTime.TryParse(termination.Value, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var t))
+            until = t.ToLocalTime();
+        return (id, until);
+    }
+
+    public async Task<List<ConnectorSubscription>> GetSubscriptionsAsync(CancellationToken ct) =>
+        ConnectorProtocol.ParseSubscriptions(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+            ns => ConnectorProtocol.GetSubscription(ns, _settings), "GetSubscription", null, ct));
+
+    public async Task UnsubscribeAsync(string subscriptionId, CancellationToken ct) =>
+        await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+            ns => ConnectorProtocol.Unsubscribe(ns, _settings, subscriptionId), "Unsubscribe", null, ct);
+
+    /// <summary>
+    /// Liest alle vier nach CertRefEnum moeglichen Zertifikate einer Karte. Fehlende Refs
+    /// sind normal (SMC-B fuehrt kein C.QES) und werden als leer, nicht als Fehler behandelt.
+    /// </summary>
+    public async Task<List<ConnectorCertificateInfo>> ReadAllCertificatesAsync(string cardHandle, CancellationToken ct)
+    {
+        var result = new List<ConnectorCertificateInfo>();
+        foreach (var (reference, _) in ConnectorProtocol.KnownCertRefs)
+        {
+            try
+            {
+                var info = await ReadCardCertificateAsync(cardHandle, reference, ct);
+                if (info is not null)
+                    result.Add(info);
+            }
+            catch (ConnectorFaultException) when (reference != "C.AUT")
+            {
+                // Karte fuehrt diese Referenz nicht – genau das wollen wir wissen, nicht melden.
+            }
+        }
+        return result;
+    }
+
     public async Task<ConnectorPinState> GetPinStatusAsync(string cardHandle, string pinType, CancellationToken ct) =>
         ConnectorProtocol.ParsePinStatus(await CallAsync("CardService", ConnectorProtocol.DefaultCardServiceNs,
             ns => ConnectorProtocol.GetPinStatus(ns, _settings, cardHandle, pinType), "GetPinStatus", null, ct), pinType);
@@ -326,6 +375,34 @@ public sealed class ConnectorClient : IDisposable
         var first = ConnectorProtocol.ParseCardCertificates(response).FirstOrDefault();
         return first.Base64 is null ? null : ConnectorProtocol.DescribeCertificate(string.IsNullOrEmpty(first.CertRef) ? certRef : first.CertRef, first.Base64);
     }
+
+    /// <summary>
+    /// Laedt die im Konnektor hinterlegten Berechtigungen fuer den aktuellen Aufrufkontext
+    /// ein. Reine Leseabfrage – fuehrt zu keiner PIN-Abfrage am Terminal.
+    /// </summary>
+    public async Task<ConnectorAccessCheck> IsContextAvailableAsync(string? accessPrivilege, CancellationToken ct)
+    {
+        // CardService liefert IsContextAvailable, nicht EventService – Namespace aus dem SDS.
+        var service = (await GetServiceDirectoryAsync(ct)).Find("CardService") is { } found ? found : null;
+        XNamespace ns = service?.TargetNamespace is { Length: > 0 } target ? target : ConnectorProtocol.DefaultCardServiceNs;
+        var endpoint = service is null
+            ? _baseUri
+            : ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);
+
+        var body = await SendAsync(new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = new StringContent(ConnectorProtocol.Envelope(ConnectorProtocol.IsContextAvailable(ns, _settings, accessPrivilege)), Encoding.UTF8, "text/xml")
+        }, DefaultTimeout, ct);
+        return ConnectorProtocol.ParseAccessCheck(ConnectorProtocol.ParseBody(body));
+    }
+
+    /// <summary>
+    /// Echte Pruefung einer Karte gegen eine Berechtigung. Kann je nach Firmware eine
+    /// PIN-Verifizierung am Terminal ausloesen – nur auf Knopfdruck verwenden, nicht im Polling.
+    /// </summary>
+    public async Task<ConnectorAccessCheck> VerifyCardAsync(string cardHandle, string? accessPrivilege, CancellationToken ct) =>
+        ConnectorProtocol.ParseAccessCheck(await CallAsync("CardService", ConnectorProtocol.DefaultCardServiceNs,
+            ns => ConnectorProtocol.VerifyCard(ns, _settings, cardHandle, accessPrivilege), "VerifyCard", TimeSpan.FromSeconds(60), ct));
 
     public async Task<ConnectorVerificationResult> VerifyCertificateAsync(string base64Certificate, CancellationToken ct) =>
         ConnectorProtocol.ParseVerification(await CallAsync("CertificateService", ConnectorProtocol.DefaultCertificateServiceNs,
@@ -359,6 +436,10 @@ public sealed class ConnectorClient : IDisposable
         await Try("Betriebszustand (GetResourceInformation)", async () => snapshot.Resource = await GetResourceInformationAsync(ct));
         await Try("Kartenterminals (GetCardTerminals)", async () => snapshot.Terminals = await GetCardTerminalsAsync(ct));
         await Try("Karten (GetCards)", async () => snapshot.Cards = await GetCardsAsync(ct));
+
+        // Aktive Abos anzeigen: ein getaetigtes Abo, an das der Konnektor nicht mehr sendet,
+        // ist eine typische Ursache dafuer, dass die App eine gesteckte Karte nicht merkt.
+        await Try("Ereignis-Abos (GetSubscription)", async () => snapshot.Subscriptions = await GetSubscriptionsAsync(ct));
 
         foreach (var card in snapshot.Cards.Where(c => c.SupportsPinManagement))
         {

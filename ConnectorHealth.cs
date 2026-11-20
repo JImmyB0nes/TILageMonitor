@@ -83,16 +83,20 @@ public static class ConnectorHealth
                 }
             }
 
-            var expiry = card.AuthCertificate?.NotAfter ?? card.CertificateExpirationDate;
+            // Fruestes Ablaufdatum aller gelesenen Zertifikate, nicht nur von C.AUT: ein
+            // abgelaufenes C.QES behindert das Signieren, ohne dass C.AUT irgendetwo auffällt.
+            var expiry = card.EarliestCertificateExpiry;
             if (expiry is { } notAfter)
             {
                 var days = (int)Math.Floor((notAfter - now).TotalDays);
+                var refs = string.Join(", ", card.Certificates.Where(c => c.NotAfter == notAfter).Select(c => c.CertRef).Distinct());
+                var which = string.IsNullOrWhiteSpace(refs) ? L("Kartenzertifikat", "card certificate") : refs;
                 if (days < 0)
                 {
                     alerts.Add(new ConnectorAlert(
                         $"cert-expired-{id}",
                         L($"{card.DisplayName}: Zertifikat abgelaufen", $"{card.DisplayName}: certificate expired"),
-                        L($"Das Kartenzertifikat ist seit {notAfter:dd.MM.yyyy} abgelaufen. Bitte Folgekarte bestellen und stecken.", $"The card certificate expired on {notAfter:yyyy-MM-dd}. Please order and insert a replacement card."),
+                        L($"{which} ist seit {notAfter:dd.MM.yyyy} abgelaufen. Bitte Folgekarte bestellen und stecken.", $"{which} expired on {notAfter:yyyy-MM-dd}. Please order and insert a replacement card."),
                         ToastUrgency.Error));
                 }
                 else if (days <= certificateWarningDays)
@@ -100,9 +104,19 @@ public static class ConnectorHealth
                     alerts.Add(new ConnectorAlert(
                         $"cert-expiring-{id}",
                         L($"{card.DisplayName}: Zertifikat läuft ab", $"{card.DisplayName}: certificate expiring"),
-                        L($"Das Kartenzertifikat läuft am {notAfter:dd.MM.yyyy} ab (noch {days} Tage).", $"The card certificate expires on {notAfter:yyyy-MM-dd} ({days} days left)."),
+                        L($"{which} läuft am {notAfter:dd.MM.yyyy} ab (noch {days} Tage).", $"{which} expires on {notAfter:yyyy-MM-dd} ({days} days left)."),
                         days <= 14 ? ToastUrgency.Error : ToastUrgency.Warning));
                 }
+            }
+
+            // QES abgelaufen: Karte steckt, PIN passt – qualifizierte Signaturen scheitern trotzdem.
+            if (card.ExpiredQesAt(now) is { } qes)
+            {
+                alerts.Add(new ConnectorAlert(
+                    $"qes-expired-{id}",
+                    L($"{card.DisplayName}: QES-Zertifikat abgelaufen", $"{card.DisplayName}: QES certificate expired"),
+                    L($"Das C.QES-Zertifikat ist seit {qes.NotAfter:dd.MM.yyyy} abgelaufen – qualifizierte Signaturen schlagen fehl, obwohl die Karte sonst einwandfrei erscheint.", $"The C.QES certificate expired on {qes.NotAfter:yyyy-MM-dd} – qualified signatures will fail although the card otherwise looks fine."),
+                    ToastUrgency.Error));
             }
         }
 

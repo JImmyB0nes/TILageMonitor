@@ -149,6 +149,118 @@ public sealed class ConnectorProtocolTests
     }
 
     [Fact]
+    public void Subscribe_puts_event_target_and_topic_in_the_subscription()
+    {
+        XNamespace evt = "http://ws.gematik.de/conn/EventService/v7.2";
+        var element = ConnectorProtocol.Subscribe(evt, Settings(), "cetp://192.168.1.20:48150", ConnectorProtocol.EventTopic(evt.NamespaceName, "CardInserted"));
+        var subscription = element.Element(evt + "Subscription")!;
+
+        Assert.Equal("cetp://192.168.1.20:48150", subscription.Element(evt + "EventTo")!.Value);
+        Assert.Equal("http://ws.gematik.de/conn/EventService/v7.2#CardInserted", subscription.Element(evt + "Topic")!.Value);
+        Assert.Null(subscription.Element(evt + "SubscriptionID"));
+        Assert.NotNull(element.Element(ConnectorProtocol.Cctx + "Context"));
+    }
+
+    [Fact]
+    public void ParseSubscriptions_reads_id_topic_and_target()
+    {
+        var xml = Wrap("""
+            <EVT:GetSubscriptionResponse xmlns:EVT="http://ws.gematik.de/conn/EventService/v7.2"
+                                         xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0">
+              <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
+              <EVT:Subscriptions>
+                <EVT:Subscription>
+                  <EVT:SubscriptionID>sub-1</EVT:SubscriptionID>
+                  <EVT:TerminationTime>2026-11-21T09:00:00Z</EVT:TerminationTime>
+                  <EVT:EventTo>cetp://192.168.1.20:48150</EVT:EventTo>
+                  <EVT:Topic>http://ws.gematik.de/conn/EventService/v7.2#CardInserted</EVT:Topic>
+                </EVT:Subscription>
+              </EVT:Subscriptions>
+            </EVT:GetSubscriptionResponse>
+            """);
+
+        var subscriptions = ConnectorProtocol.ParseSubscriptions(ConnectorProtocol.ParseBody(xml));
+
+        var sub = Assert.Single(subscriptions);
+        Assert.Equal("sub-1", sub.SubscriptionId);
+        Assert.Equal("cetp://192.168.1.20:48150", sub.EventTo);
+        Assert.EndsWith("#CardInserted", sub.Topic);
+        Assert.NotNull(sub.TerminationTime);
+    }
+
+    [Fact]
+    public void ParseEvent_reads_topic_and_parameters_from_a_plain_event_message()
+    {
+        var evt = ConnectorProtocol.ParseEvent("""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <EVT:Event xmlns:EVT="http://ws.gematik.de/conn/EventService/v7.2">
+              <EVT:Topic>http://ws.gematik.de/conn/EventService/v7.2#CardInserted</EVT:Topic>
+              <EVT:Type>Operation</EVT:Type>
+              <EVT:Severity>Info</EVT:Severity>
+              <EVT:SubscriptionID>sub-1</EVT:SubscriptionID>
+              <EVT:Message>
+                <EVT:Parameter><EVT:Key>CtId</EVT:Key><EVT:Value>CT1</EVT:Value></EVT:Parameter>
+                <EVT:Parameter><EVT:Key>SlotId</EVT:Key><EVT:Value>1</EVT:Value></EVT:Parameter>
+              </EVT:Message>
+            </EVT:Event>
+            """);
+
+        Assert.NotNull(evt);
+        Assert.Equal("Operation", evt!.Type);
+        Assert.Equal("Info", evt.Severity);
+        Assert.Equal("CT1", evt.Param("CtId"));
+        Assert.Equal("1", evt.Param("SlotId"));
+        Assert.Null(evt.Param("Unbekannt"));
+        Assert.Contains("CtId=CT1", evt.Summary);
+    }
+
+    [Fact]
+    public void ParseEvent_returns_null_for_unrelated_or_broken_messages()
+    {
+        Assert.Null(ConnectorProtocol.ParseEvent("kein xml"));
+        Assert.Null(ConnectorProtocol.ParseEvent("<EVT:Something xmlns:EVT='http://ws.gematik.de/conn/EventService/v7.2'/>"));
+    }
+
+    [Fact]
+    public void ParseCardTerminals_reads_product_information_and_workplaces()
+    {
+        var xml = Wrap("""
+            <EVT:GetResourceInformationResponse xmlns:EVT="http://ws.gematik.de/conn/EventService/v7.2"
+                                               xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0"
+                                               xmlns:CT="http://ws.gematik.de/conn/CardTerminalInfo/v8.0"
+                                               xmlns:PI="http://ws.gematik.de/int/version/ProductInformation/v1.1">
+              <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
+              <CT:CardTerminal>
+                <PI:ProductInformation>
+                  <PI:ProductIdentification>
+                    <PI:ProductVersion><PI:Local><PI:HWVersion>2.0</PI:HWVersion><PI:FWVersion>5.1.1</PI:FWVersion></PI:Local></PI:ProductVersion>
+                  </PI:ProductIdentification>
+                  <PI:ProductMiscellaneous>
+                    <PI:ProductVendorName>Cardware GmbH</PI:ProductVendorName>
+                    <PI:ProductName>CC200</PI:ProductName>
+                  </PI:ProductMiscellaneous>
+                </PI:ProductInformation>
+                <CONN:CtId>CT1</CONN:CtId>
+                <CONN:WorkplaceIds><CONN:WorkplaceId>AP1</CONN:WorkplaceId><CONN:WorkplaceId>AP2</CONN:WorkplaceId></CONN:WorkplaceIds>
+                <CT:Name>Empfang</CT:Name>
+                <CT:Slots>4</CT:Slots>
+                <CT:IS_PHYSICAL>true</CT:IS_PHYSICAL>
+                <CT:Connected>true</CT:Connected>
+              </CT:CardTerminal>
+            </EVT:GetResourceInformationResponse>
+            """);
+
+        var terminal = Assert.Single(ConnectorProtocol.ParseCardTerminals(ConnectorProtocol.ParseBody(xml)));
+
+        Assert.Equal("Cardware GmbH", terminal.VendorName);
+        Assert.Equal("CC200", terminal.ProductName);
+        Assert.Equal("5.1.1", terminal.FirmwareVersion);
+        Assert.Equal(["AP1", "AP2"], terminal.Workplaces);
+        Assert.Contains("FW 5.1.1", terminal.Details);
+        Assert.Equal("Empfang (CT1)", terminal.Label);
+    }
+
+    [Fact]
     public void GetCards_can_be_requested_without_mandant_wide_attribute_value_true()
     {
         XNamespace evt = "http://ws.gematik.de/conn/EventService/v7.2";
@@ -385,6 +497,58 @@ public sealed class ConnectorProtocolTests
         Assert.Equal("1-2arvtst-ap000001", telematikId);
         Assert.Equal("Betriebsstätte Arzt", profession);
     }
+
+    [Fact]
+    public void ParseAccessCheck_prefers_the_boolean_flag_over_the_result_string()
+    {
+        var xml = Wrap("""
+            <CS:GetAccessCheckResponse xmlns:CS="http://ws.gematik.de/conn/CardService/v8.1"
+                                      xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0">
+              <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
+              <CS:IsContextAvailable>false</CS:IsContextAvailable>
+            </CS:GetAccessCheckResponse>
+            """);
+
+        var check = ConnectorProtocol.ParseAccessCheck(ConnectorProtocol.ParseBody(xml));
+        Assert.False(check.Granted);
+    }
+
+    [Fact]
+    public void ParseAccessCheck_falls_back_to_the_result_when_no_flag_is_present()
+    {
+        var xml = Wrap("""
+            <CS:VerifyCardResponse xmlns:CS="http://ws.gematik.de/conn/CardService/v8.1"
+                                   xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0">
+              <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
+              <CS:VerificationResult>OK</CS:VerificationResult>
+              <CS:Roles><CS:Role>NARZT</CS:Role></CS:Roles>
+            </CS:VerifyCardResponse>
+            """);
+
+        var check = ConnectorProtocol.ParseAccessCheck(ConnectorProtocol.ParseBody(xml));
+        Assert.True(check.Granted);
+        Assert.Equal(["NARZT"], check.Roles);
+    }
+
+    [Fact]
+    public void VerifyCard_puts_card_handle_and_privilege_into_the_request()
+    {
+        XNamespace card = "http://ws.gematik.de/conn/CardService/v8.1";
+        var element = ConnectorProtocol.VerifyCard(card, Settings(), "handle-1", "VSDM");
+
+        Assert.Equal("handle-1", element.Element(ConnectorProtocol.Conn + "CardHandle")!.Value);
+        Assert.Equal("VSDM", element.Element(ConnectorProtocol.Conn + "AccessPrivilege")!.Value);
+    }
+
+    [Fact]
+    public void IsContextAvailable_omits_the_privilege_when_not_requested()
+    {
+        XNamespace card = "http://ws.gematik.de/conn/CardService/v8.1";
+        var element = ConnectorProtocol.IsContextAvailable(card, Settings());
+
+        Assert.Null(element.Element(ConnectorProtocol.Conn + "AccessPrivilege"));
+        Assert.NotNull(element.Element(ConnectorProtocol.Cctx + "Context"));
+    }
 }
 
 public sealed class ConnectorHealthTests
@@ -443,6 +607,69 @@ public sealed class ConnectorHealthTests
         Assert.Contains("cert-expired-2", keys);
         Assert.Contains("pin-blocked-2-PIN.CH", keys);
         Assert.DoesNotContain("no-smcb", keys);
+    }
+
+    [Fact]
+    public void Configuration_diff_reports_only_real_changes()
+    {
+        var before = new List<string> { "firmware: 1.2.3", "dienst: EventService=v7.2", "terminal: CT1=Empfang|CC200|verbunden" };
+        var after = new List<string> { "firmware: 1.2.4", "dienst: EventService=v7.2", "terminal: CT2=Empfang|CC200|verbunden" };
+
+        var changes = ConnectorConfigurationDiff.Diff(before, after);
+
+        Assert.Contains("~ firmware: 1.2.3 → 1.2.4", changes);
+        Assert.Contains("+ terminal CT2: CT2=Empfang|CC200|verbunden", changes);
+        Assert.Contains("- terminal CT1: entfallen", changes);
+        Assert.DoesNotContain(changes, c => c.Contains("EventService"));
+    }
+
+    [Fact]
+    public void Configuration_diff_is_stable_across_reordering()
+    {
+        var lines = new List<string> { "terminal: CT1=Empfang", "firmware: 1.0", "dienst: EventService=v7.2" };
+        var shuffled = new List<string> { "dienst: EventService=v7.2", "firmware: 1.0", "terminal: CT1=Empfang" };
+
+        Assert.Empty(ConnectorConfigurationDiff.Diff(lines, shuffled));
+        Assert.Equal(ConnectorConfigurationDiff.Fingerprint(lines), ConnectorConfigurationDiff.Fingerprint(shuffled));
+    }
+
+    [Fact]
+    public void Configuration_diff_separates_two_terminals_by_their_own_key()
+    {
+        var before = new List<string> { "terminal: CT1=Empfang|verbunden", "terminal: CT2=Zimmer|verbunden" };
+        var after = new List<string> { "terminal: CT1=Empfang|getrennt", "terminal: CT2=Zimmer|verbunden" };
+
+        var changes = ConnectorConfigurationDiff.Diff(before, after);
+
+        var change = Assert.Single(changes);
+        Assert.StartsWith("~ terminal CT1: ", change);
+    }
+
+    [Fact]
+    public void Expired_qes_is_reported_even_when_the_card_otherwise_looks_healthy()
+    {
+        var snapshot = new ConnectorSnapshot
+        {
+            Resource = new ConnectorResourceInfo { VpnTiStatus = "Online" },
+            Cards =
+            [
+                new ConnectorCard
+                {
+                    CardType = "HBA", Iccsn = "2",
+                    PinStates = [new ConnectorPinState { PinType = "PIN.CH", Status = "VERIFIED" }],
+                    Certificates =
+                    [
+                        new ConnectorCertificateInfo { CertRef = "C.AUT", NotAfter = new DateTime(2027, 1, 1) },
+                        new ConnectorCertificateInfo { CertRef = "C.QES", NotAfter = new DateTime(2026, 10, 1) }
+                    ]
+                }
+            ]
+        };
+
+        var keys = ConnectorHealth.Evaluate(snapshot, 60, Now).Select(a => a.Key).ToList();
+        Assert.Contains("qes-expired-2", keys);
+        // Das frueheste Ablaufdatum fuehrt zusaetzlich zur regulaeren Warnung, nicht ins Leere.
+        Assert.Contains("cert-expired-2", keys);
     }
 
     [Fact]

@@ -220,6 +220,13 @@
                                 <CheckBox x:Name="EnabledToggle" Content="Konnektor-Anbindung aktiv" Style="{DynamicResource ThemeAwareCheckBoxStyle}" Margin="0,0,24,8"/>
                                 <CheckBox x:Name="MonitoringToggle" Content="Im Hintergrund überwachen (Toasts)" Style="{DynamicResource ThemeAwareCheckBoxStyle}" Margin="0,0,24,8"/>
                             </WrapPanel>
+                            <WrapPanel>
+                                <CheckBox x:Name="EventSubscriptionsToggle" Content="Ereignis-Abos (Karte rein/raus sofort, statt nur Pollen)" Style="{DynamicResource ThemeAwareCheckBoxStyle}" Margin="0,0,24,8"
+                                          ToolTip="Die App lauscht auf einem lokalen TCP-Port. Schlaegt das Abo fehl, wird automatisch weiter gepollt."/>
+                                <CheckBox x:Name="HistoryToggle" Content="Konnektor-Verlauf lokal speichern (14 Tage)" Style="{DynamicResource ThemeAwareCheckBoxStyle}" Margin="0,0,24,8"
+                                          ToolTip="Für Timeline und Stoerdauer – auch dann, wenn die gematik-API nicht erreichbar ist"/>
+                            </WrapPanel>
+                            <TextBlock x:Name="EventStreamInfo" Text="" Style="{StaticResource SectionHintStyle}" TextWrapping="Wrap" Margin="0,0,0,6"/>
                             <WrapPanel Margin="0,4,0,0">
                                 <TextBlock Text="Intervall (Minuten)" Style="{StaticResource FieldLabelStyle}"/>
                                 <TextBox x:Name="PollMinutesBox" Width="60" Margin="0,0,24,8"/>
