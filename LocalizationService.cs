@@ -316,6 +316,14 @@ public static class LocalizationService
         ["Konnektor-Anbindung aktiv"] = "Connector integration enabled",
         ["Im Hintergrund überwachen (Toasts)"] = "Monitor in background (toasts)",
         ["Ereignis-Abos (Karte rein/raus sofort, statt nur Pollen)"] = "Event subscriptions (card inserted/removed instantly, instead of polling only)",
+        // Die XAML-Fassung laesst "statt nur Pollen" weg – ohne diese Zeile stand der Kasten
+        // im Englischen deutsch da, weil die Uebersetzung nach dem vollen Text sucht.
+        ["Ereignis-Abos (Karte rein/raus sofort)"] = "Event subscriptions (card inserted/removed instantly)",
+        ["Karte"] = "Card",
+        ["Ereignis-Abos"] = "Event subscriptions",
+        ["Was der Konnektor derzeit an diese App meldet. Leere Liste heißt: es wird nur gepollt."] = "What the connector currently reports to this app. An empty list means: polling only.",
+        ["Abos dieser App kündigen"] = "Cancel this app's subscriptions",
+        ["Entfernt alle Einträge, die auf diesem Rechner zeigen. Hilft, wenn derselbe Lauscher nach Fehlversuchen mehrfach steht."] = "Removes all entries pointing at this machine. Useful when the same listener keeps being registered after failed attempts.",
         ["Konnektor-Verlauf lokal speichern (14 Tage)"] = "Store connector history locally (14 days)",
         ["Die App lauscht auf einem lokalen TCP-Port. Schlägt das Abo fehl, wird automatisch weiter gepollt."] = "The app listens on a local TCP port. If the subscription fails, polling continues automatically.",
         ["Für Timeline und Stördauer – auch dann, wenn die gematik-API nicht erreichbar ist"] = "For timeline and outage duration – even when the gematik API is unreachable",

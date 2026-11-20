@@ -56,7 +56,15 @@ public sealed class ConnectorPresence
     public static ConnectorPresence? FromSnapshot(ConnectorSnapshot snapshot)
     {
         if (snapshot.Cards.Count == 0)
+        {
+            // Eine leere Kartenliste ist zweierlei: die Karte ist raus, oder GetCards hat
+            // nichts geliefert. Das eine zu melden ist eine Aussage, das andere eine
+            // Unterstellung – ConnectorHealth schuetzt an gleicher Stelle schon genauso.
+            if (snapshot.Warnings.Any(w => w.Contains("GetCards", StringComparison.Ordinal)))
+                return null;
+
             return new ConnectorPresence { Inserted = false, At = snapshot.RetrievedAt, ViaEvent = false };
+        }
 
         // Die SMC-B ist für die TI-Arbeit die entscheidende Karte, nicht irgendeine.
         var card = snapshot.Cards.FirstOrDefault(c => c.IsSmcB) ?? snapshot.Cards[0];

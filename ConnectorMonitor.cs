@@ -43,12 +43,6 @@ public sealed class ConnectorMonitor : IDisposable
     /// </summary>
     public ConnectorPresence? LastPresence { get; private set; }
 
-    /// <summary>
-    /// Letzter Grund fuer die Anwesenheitsanzeige, damit der Nutzer nachvollziehen kann, warum
-    /// der Indikator auf "gerade eben" steht, ohne dass die App eine Karte gesteckt hat.
-    /// </summary>
-    public string PresenceSource { get; private set; } = "";
-
     /// <summary>Bemerkung des Lauschers, z. B. "kein freier Port" – ohne eigenes Ereignis.</summary>
     public string? LastEventNote { get; private set; }
 
@@ -69,6 +63,10 @@ public sealed class ConnectorMonitor : IDisposable
             LastSnapshot = null;
             LastAlerts = [];
             LastError = null;
+            // Ohne ueberwachung darf nichts nachstehen, was nach Abschaltung der Anbindung
+            // noch auf "Karte rein" steht – dieselbe Begruendung, die fuer LastSnapshot gilt.
+            LastPresence = null;
+            LastEvent = null;
             Updated?.Invoke();
             return;
         }
@@ -101,9 +99,26 @@ public sealed class ConnectorMonitor : IDisposable
         LastError = null;
         LastAttempt = DateTime.Now;
         LastAlerts = ConnectorHealth.Evaluate(snapshot, settings.CertificateWarningDays, DateTime.Now);
+
+        // Das Fenster uebergibt hier seinen eigenen Stand, der aelter sein kann als das, was
+        // der Lauscher gerade gemeldet hat. Dieselbe Kante wie im Pollabgleich, sonst
+        // dreht ein Accept die frische Anwesenheit auf den Datenstand zurueck.
+        RefreshPresence(snapshot);
         if (settings.HistoryEnabled)
             ConnectorHistoryStore.UpsertNow(snapshot, DateTime.Now);
         Updated?.Invoke();
+    }
+
+    /// <summary>
+    /// Fuehrt die Anwesenheit nach: ein frisches Ereignis fuehrt, sonst der Datenstand. Dieselbe
+    /// Kante an Poll- und Accept-Pfad, damit der eine den anderen nicht rueckgaengig macht.
+    /// </summary>
+    private void RefreshPresence(ConnectorSnapshot snapshot)
+    {
+        if (ConnectorPresence.FromEvent(LastEvent) is { } fromEvent && (DateTime.Now - fromEvent.At).TotalSeconds <= ConnectorPresence.LiveWindowSeconds)
+            LastPresence = fromEvent;
+        else
+            LastPresence = ConnectorPresence.FromSnapshot(snapshot);
     }
 
     private async Task LoopAsync(CancellationToken ct)
@@ -153,16 +168,7 @@ public sealed class ConnectorMonitor : IDisposable
             // Ein Ereignis darf nicht vom naechsten Poll uebermaalt werden, sonst faellt der
             // Indikator zuruck, obwohl die Karte laengst bekannt ist. Nur der eigene Stand des
             // Polls ersetzt ihn, wenn kein frisches Ereignis vorliegt.
-            if (ConnectorPresence.FromEvent(LastEvent) is { } fromEvent && (DateTime.Now - fromEvent.At).TotalSeconds <= ConnectorPresence.LiveWindowSeconds)
-            {
-                LastPresence = fromEvent;
-                PresenceSource = L("Konnektor-Ereignis", "connector event");
-            }
-            else
-            {
-                LastPresence = ConnectorPresence.FromSnapshot(snapshot);
-                PresenceSource = L("Pollabfrage", "polling");
-            }
+            RefreshPresence(snapshot);
 
             foreach (var alert in alerts.Where(a => !_activeAlertKeys.Contains(a.Key)))
                 Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
@@ -275,10 +281,7 @@ public sealed class ConnectorMonitor : IDisposable
         // Karte rein/raus sofort, nicht erst nach dem naechsten Abgleich: wer die Karte zieht,
         // will das ohne Umweg sehen, waehrend die eigentlichen Einzelheiten nachgezogen werden.
         if (ConnectorPresence.FromEvent(evt) is { } presence)
-        {
             LastPresence = presence;
-            PresenceSource = L("Konnektor-Ereignis", "connector event");
-        }
 
         Updated?.Invoke();
 
