@@ -212,7 +212,7 @@
                     <Viewbox Width="21" Height="21" Stretch="Uniform">
                         <Canvas Width="24" Height="24">
                             <Path Stroke="{DynamicResource AppIconForeground}" StrokeThickness="1.8"
-                                  StrokeLineCap="Round" StrokeLineJoin="Round"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                   Data="M13,2 L4,14 H10 L9,22 L19,10 H13 Z"/>
                         </Canvas>
                     </Viewbox>
@@ -234,7 +234,7 @@
                         <Viewbox Width="14" Height="14" VerticalAlignment="Center" Margin="0,0,7,0">
                             <Canvas Width="24" Height="24">
                                 <Path Stroke="{DynamicResource ButtonForeground}" StrokeThickness="1.9"
-                                      StrokeLineCap="Round" StrokeLineJoin="Round"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                       Data="M21,12 A9,9 0 1 1 18,5.3 M21,3 V9 H15"/>
                             </Canvas>
                         </Viewbox>
@@ -348,7 +348,7 @@
                         <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
                             <Canvas Width="24" Height="24">
                                 <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      StrokeLineCap="Round" StrokeLineJoin="Round"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                       Data="M3,4 H21 V16 H3 Z M8,20 H16 M12,16 V20"/>
                             </Canvas>
                         </Viewbox>
@@ -362,7 +362,7 @@
                         <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
                             <Canvas Width="24" Height="24">
                                 <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      StrokeLineCap="Round" StrokeLineJoin="Round"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                       Data="M9,2 V8 M15,2 V8 M6,8 H18 V11 A6,6 0 0 1 6,11 Z M12,17 V22"/>
                             </Canvas>
                         </Viewbox>
