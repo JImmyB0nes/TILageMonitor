@@ -113,6 +113,22 @@ public sealed class ConnectorPresenceTests
     }
 
     [Fact]
+    public void An_unanswered_GetCards_leaves_the_display_silent()
+    {
+        // Leere Kartenliste und fehlgeschlagenes GetCards sehen gleich aus, sind aber
+        // verschiedenes: das eine ist eine Aussage, das andere eine Unterlassung.
+        var empty = new ConnectorSnapshot { RetrievedAt = Now };
+        Assert.NotNull(ConnectorPresence.FromSnapshot(empty));
+
+        var failed = new ConnectorSnapshot
+        {
+            RetrievedAt = Now,
+            Warnings = ["Karten (GetCards): The request was canceled"]
+        };
+        Assert.Null(ConnectorPresence.FromSnapshot(failed));
+    }
+
+    [Fact]
     public void Disabled_pin_is_reported_as_a_deviation_not_as_an_error()
     {
         var snapshot = new ConnectorSnapshot
