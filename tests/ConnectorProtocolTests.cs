@@ -610,6 +610,37 @@ public sealed class ConnectorHealthTests
     }
 
     [Fact]
+    public void Connector_history_hours_show_up_in_the_timeline()
+    {
+        var file = new ConnectorHistoryFile();
+        var hour = new ConnectorHourSnapshot { HourKey = DateTime.Now.Date.ToString("yyyy-MM-dd-HH") + "zzz" };
+        hour.States["cert-expired-3"] = "full";
+        hour.States["ct-CT2"] = "partial";
+        file.Hours.Add(hour);
+
+        var events = HistoryTimelineBuilder.Build(null, null, null, 80, file);
+
+        var expired = events.Single(e => e.Body.Contains("Karte 3"));
+        Assert.Equal("Störung", expired.KindLabel);
+        Assert.Equal("konnektor", expired.ServiceKey);
+
+        var terminal = events.Single(e => e.Body.Contains("CT2"));
+        Assert.Equal("Teilausfall", terminal.KindLabel);
+    }
+
+    [Fact]
+    public void Connector_history_events_are_hidden_when_another_service_is_filtered()
+    {
+        var file = new ConnectorHistoryFile();
+        var hour = new ConnectorHourSnapshot { HourKey = DateTime.Now.Date.ToString("yyyy-MM-dd-HH") + "zzz" };
+        hour.States["vpn-ti"] = "full";
+        file.Hours.Add(hour);
+
+        Assert.Empty(HistoryTimelineBuilder.Build(null, null, "erezept", 80, file));
+        Assert.Single(HistoryTimelineBuilder.Build(null, null, "konnektor", 80, file));
+    }
+
+    [Fact]
     public void Configuration_diff_reports_only_real_changes()
     {
         var before = new List<string> { "firmware: 1.2.3", "dienst: EventService=v7.2", "terminal: CT1=Empfang|CC200|verbunden" };

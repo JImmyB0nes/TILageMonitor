@@ -132,6 +132,12 @@ public partial class HistoryWindow : Window
             ServiceFilterPanel.Children.Add(CreateFilterChip(name, key));
         }
 
+        // Eigener Chip fuer den lokalen Konnektor: der steht bewusst nicht in ServiceKeys,
+        // weil die Zahl dort in die Veruegbarkeitsrechnung ueber die API einfliesst wuerde.
+        ServiceFilterPanel.Children.Add(CreateFilterChip(
+            AppSettings.ServiceDisplayNames[HistoryTimelineBuilder.ConnectorServiceKey],
+            HistoryTimelineBuilder.ConnectorServiceKey));
+
         RefreshFilterChipStyles();
     }
 
@@ -342,7 +348,10 @@ public partial class HistoryWindow : Window
 
     private void RefreshTimeline()
     {
-        if (!_hasAnyData)
+        // Lokaler Konnektor-Verlauf zaehlt auch ohne erreichbare API, sonst bleibt die
+        // Timeline leer, obwohl der Konnektor Stoerungen gemeldet hat.
+        var connectorHistory = ConnectorHistoryStore.Load();
+        if (!_hasAnyData && connectorHistory.Hours.Count == 0)
         {
             _timelineEventsCache = new List<HistoryTimelineEvent>();
             EventsTimelineList.ItemsSource = new List<HistoryTimelineEvent>();
@@ -358,7 +367,7 @@ public partial class HistoryWindow : Window
                 _highlightedEventIdentity = TimelineEventIdentity(current);
         }
 
-        _timelineEventsCache = HistoryTimelineBuilder.Build(_incidents, _outages, _selectedServiceKey);
+        _timelineEventsCache = HistoryTimelineBuilder.Build(_incidents, _outages, _selectedServiceKey, 80, connectorHistory);
         ApplyTimelineNavigationState();
         ReapplyTimelineHighlight();
         EventsTimelineList.ItemsSource = _timelineEventsCache.ToList();
@@ -884,7 +893,7 @@ public partial class HistoryWindow : Window
             (!string.IsNullOrWhiteSpace(_selectedServiceKey) &&
              !candidates.Any(ev => string.Equals(ev.ServiceKey, row.ServiceKey, StringComparison.OrdinalIgnoreCase))))
         {
-            candidates = HistoryTimelineBuilder.Build(_incidents, _outages, row.ServiceKey);
+            candidates = HistoryTimelineBuilder.Build(_incidents, _outages, row.ServiceKey, 80, ConnectorHistoryStore.Load());
         }
 
         var match = candidates
@@ -936,7 +945,7 @@ public partial class HistoryWindow : Window
         if (inCache is null)
         {
             // Rebuild without filter so the event is visible, keep service chip as-is
-            _timelineEventsCache = HistoryTimelineBuilder.Build(_incidents, _outages, _selectedServiceKey);
+            _timelineEventsCache = HistoryTimelineBuilder.Build(_incidents, _outages, _selectedServiceKey, 80, ConnectorHistoryStore.Load());
             inCache = _timelineEventsCache.FirstOrDefault(ev =>
                 string.Equals(ev.ServiceKey, target.ServiceKey, StringComparison.OrdinalIgnoreCase) &&
                 ev.StartLocal == target.StartLocal &&
@@ -1050,8 +1059,9 @@ public partial class HistoryWindow : Window
     {
         try
         {
-            var events = _hasAnyData
-                ? HistoryTimelineBuilder.Build(_incidents, _outages, _selectedServiceKey, int.MaxValue)
+            var connectorHistory = ConnectorHistoryStore.Load();
+            var events = _hasAnyData || connectorHistory.Hours.Count > 0
+                ? HistoryTimelineBuilder.Build(_incidents, _outages, _selectedServiceKey, int.MaxValue, connectorHistory)
                 : new List<HistoryTimelineEvent>();
 
             if (events.Count == 0)

@@ -1064,6 +1064,11 @@ public partial class ConnectorWindow : Window
                 sb.AppendLine($"  {sub.SubscriptionId}  {sub.Topic}  ->  {sub.EventTo}");
         }
         sb.AppendLine("Konfiguration: " + ConnectorConfigurationDiff.DescribeLastChange());
+        var history = ConnectorHistoryStore.Load();
+        var keys = history.Hours.Select(h => h.HourKey).Distinct(StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        sb.AppendLine(keys.Count > 0
+            ? $"Konnektor-Verlauf: {keys.Count} Stunden erfasst ({keys.First()[..13]} bis {keys.Last()[..13]})"
+            : "Konnektor-Verlauf: noch keine Stunde erfasst – dafuer nur, was der Konnektor selbst meldet.");
         foreach (var a in ConnectorHealth.Evaluate(s, settings.CertificateWarningDays, DateTime.Now))
             sb.AppendLine($"Hinweis [{a.Urgency}]: {a.Title} – {a.Body}");
         return sb.ToString();

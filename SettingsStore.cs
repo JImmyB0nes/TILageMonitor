@@ -65,7 +65,10 @@ public sealed class AppSettings
             ["wanda"] = "WANDA",
             ["ogd"] = "OGD",
             ["vsdm"] = "VSDM",
-            ["tianschluss"] = "TI-Anschluss"
+            ["tianschluss"] = "TI-Anschluss",
+            // Eigener Key fuer den lokalen Konnektor-Verlauf. Der laeuft nicht ueber die
+            // gematik-API, sondern ausschliesslich ueber den Konnektor selbst.
+            ["konnektor"] = "Konnektor"
         };
 
     public static Dictionary<string, bool> CreateDefaultNotifyServices()

@@ -18,6 +18,12 @@ public sealed class HistoryTimelineEvent
     public string Title { get; }
     public string TimeRangeText { get; }
     public string Body { get; }
+
+    /// <summary>
+    /// Eigentlicher Grund, wenn er ueber die reine Art (Störung/Teilausfall) hinausgeht –
+    /// beim lokalen Konnektor-Verlauf die konkrete Meldung statt einer allgemeinen Floskel.
+    /// </summary>
+    public string? Detail { get; }
     public string ClickHint { get; }
     public string? StatusCode { get; }
     public string DisplayLine { get; }
@@ -33,17 +39,19 @@ public sealed class HistoryTimelineEvent
         string serviceName,
         string kindLabel,
         DateTime startLocal,
-        DateTime endLocal)
+        DateTime endLocal,
+        string? detail = null)
     {
         ServiceKey = serviceKey;
         ServiceName = serviceName;
         KindLabel = kindLabel;
+        Detail = detail;
         StartLocal = startLocal;
         EndLocal = endLocal;
         StatusCode = StatusCodeFromKind(kindLabel);
         Title = $"{serviceName} · {LocalizationService.Translate(kindLabel)}";
         TimeRangeText = FormatRange(startLocal, endLocal);
-        Body = LocalizationService.Translate(kindLabel switch
+        Body = detail ?? LocalizationService.Translate(kindLabel switch
         {
             "Störung" => "Vollständige Störung im TI-Status — Stundenansicht für Details.",
             "Teilausfall" => "Einschränkung / Teilausfall — Zeitraum lokal dargestellt.",
@@ -92,11 +100,14 @@ public static class HistoryTimelineBuilder
         IncidentResponse? incidents,
         OutageResponse? outages,
         string? serviceFilterKey = null,
-        int maxEvents = 80)
+        int maxEvents = 80,
+        ConnectorHistoryFile? connectorHistory = null)
     {
         var windowStart = DateTime.Today.AddDays(-13);
         var windowEnd = DateTime.Today.AddDays(1);
         var events = new List<HistoryTimelineEvent>();
+
+        events.AddRange(FromConnectorHistory(connectorHistory, serviceFilterKey, windowStart, windowEnd));
 
         if (incidents?.Data is { Count: > 0 })
         {
@@ -201,6 +212,111 @@ public static class HistoryTimelineBuilder
             .ToList();
     }
 
+    /// <summary>
+    /// Uebersetzt den lokalen Konnektor-Verlauf in Timeline-Eintraege. Noetig, weil Karten-,
+    /// Terminal- und Zertifikatsstoerungen nicht ueber die gematik-API laufen und im Verlauf
+    /// sonst leer waeren, obwohl der Konnektor sehr wohl etwas gemeldet hat.
+    /// </summary>
+    private static IEnumerable<HistoryTimelineEvent> FromConnectorHistory(
+        ConnectorHistoryFile? history,
+        string? serviceFilterKey,
+        DateTime windowStart,
+        DateTime windowEnd)
+    {
+        if (history?.Hours is not { Count: > 0 })
+            yield break;
+
+        // Eine Stoerung kann sich ueber mehrere Stunden ziehen – also je Beobachtungspunkt
+        // aneinandergereihte Stunden zu einem Intervall bndeln.
+        foreach (var group in history.Hours
+                     .SelectMany(h => h.States.Select(s => (Hour: h, s.Key, s.Value)))
+                     .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var hours = group
+                .Select(x => (Start: ParseHour(x.Hour.HourKey), Severity: x.Value))
+                .Where(x => x.Start >= windowStart && x.Start < windowEnd)
+                .OrderBy(x => x.Start)
+                .ToList();
+            if (hours.Count == 0)
+                continue;
+
+            var severity = hours.Max(x => HistoryStore.StatusSeverity(x.Severity));
+            var kind = severity >= 3 ? "Störung" : "Teilausfall";
+
+            // Der Filter steht auf einem gematik-Dienst: lokale Konnektor-Eintraege passen
+            // nicht dazu und sollen dann nicht unter einem fremden Dienstkey auftauchen.
+            if (serviceFilterKey is not null &&
+                !string.Equals(serviceFilterKey, ConnectorServiceKey, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var name = AppSettings.ServiceDisplayNames.TryGetValue(ConnectorServiceKey, out var n) ? n : ConnectorServiceKey;
+            var description = DescribeConnectorKey(group.Key);
+            yield return new HistoryTimelineEvent(
+                ConnectorServiceKey,
+                name,
+                kind,
+                hours.First().Start,
+                hours.Last().Start.AddHours(1),
+                $"{description} – ueber {hours.Count} Stunde(n) im lokalen Konnektor-Verlauf erfasst.");
+        }
+    }
+
+    /// <summary>Beobachtungspunkt fuer den Konnektor-Verlauf, damit die Timeline einen Namen hat.</summary>
+    public const string ConnectorServiceKey = "konnektor";
+
+    private static bool TryParseHour(string hourKey, out DateTime value)
+    {
+        value = DateTime.MinValue;
+        return hourKey.Length >= 13 &&
+               DateTime.TryParseExact(hourKey[..13], "yyyy-MM-dd-HH",
+                   CultureInfo.InvariantCulture, DateTimeStyles.None, out value);
+    }
+
+    private static DateTime ParseHour(string hourKey) => TryParseHour(hourKey, out var value) ? value : DateTime.MinValue;
+
+    /// <summary>
+    /// Macht aus den Beobachtungskeys lesbare Texte. Die Keys stammen aus
+    /// <see cref="ConnectorHealth.Evaluate"/> und koennen einen Anhaenger (Terminal-/Karten-
+    /// Kennung oder PIN-Typ) tragen, der hier mit ausgegeben wird.
+    /// </summary>
+    private static string DescribeConnectorKey(string key)
+    {
+        // Die Keys stammen aus ConnectorHealth.Evaluate. "vpn-ti" und "no-smcb" enthalten
+        // selbst schon einen Strich, ohne einen Anhaenger zu fuehren – deshalb vorrang
+        // nach den mehrdeutigen Praefixen suchen, bevor gesplittet wird.
+        foreach (var (prefix, format) in new[]
+                 {
+                     ("smcb-unverified-", "SMC-B {0} nicht PIN-verifiziert"),
+                     ("cert-expired-", "Zertifikat der Karte {0} abgelaufen"),
+                     ("cert-expiring-", "Zertifikat der Karte {0} laeuft ab"),
+                     ("qes-expired-", "QES-Zertifikat der Karte {0} abgelaufen"),
+                     ("pin-blocked-", "{1} der Karte {0} ist gesperrt"),
+                     ("ct-", "Kartenterminal {0} nicht verbunden")
+                 })
+        {
+            if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var tail = key[prefix.Length..];
+            // "2-PIN.CH" enthaelt Kartenkennung plus PIN-Typ – beides soll vorkommen.
+            if (format.Contains("{1}"))
+            {
+                var split = tail.LastIndexOf('-');
+                if (split <= 0)
+                    return string.Format(format.Replace("{1}", "PIN"), tail, "");
+                return string.Format(format, tail[..split], tail[(split + 1)..]);
+            }
+            return string.Format(format, tail);
+        }
+
+        return key switch
+        {
+            var k when k.Equals("vpn-ti", StringComparison.OrdinalIgnoreCase) => "TI-Anschluss offline",
+            var k when k.Equals("no-smcb", StringComparison.OrdinalIgnoreCase) => "keine SMC-B gesteckt",
+            _ => $"Beobachtungspunkt \u201E{key}\u201C gemeldet"
+        };
+    }
+
     private static string? KindFromIncidentStep(IncidentStep step)
     {
         // Align with HistoryStore.IncidentSeverity / live classifier: outage before maintenance.
@@ -242,7 +358,8 @@ public static class HistoryTimelineBuilder
                         current.ServiceName,
                         current.KindLabel,
                         start,
-                        end);
+                        end,
+                        current.Detail);
                 }
                 else
                 {
@@ -272,6 +389,9 @@ public static class HistoryTimelineBuilder
                 kept.Any(k =>
                     !string.Equals(k.KindLabel, "Teilausfall", StringComparison.Ordinal) &&
                     string.Equals(k.ServiceKey, ev.ServiceKey, StringComparison.OrdinalIgnoreCase) &&
+                    // Nur dieselbe Beobachtung schluckt, nicht alles am selben Dienst: sonst
+                    // fiel eine getrennte Terminalstunde unter eine zeitgleiche Zertifikatswarnung.
+                    string.Equals(k.Detail ?? "", ev.Detail ?? "", StringComparison.Ordinal) &&
                     k.StartLocal < ev.EndLocal && ev.StartLocal < k.EndLocal);
             if (redundantOutage)
                 continue;
