@@ -1363,6 +1363,21 @@ public partial class ConnectorWindow : Window
 
     private ConnectorClient CreateClient() => new(_ownerMain.GetSettingsSnapshot().Connector, Log);
 
+    /// <summary>
+    /// Dieselbe Karte im aktuell gezeichneten Datenstand. Die Knopfe halten die Karte mit, die
+    /// beim Aufbau der Maske herauskam; seit der Hintergrundpollen nachzeichnet, koennen die
+    /// langst vertauscht sein. Ueber die CardHandle bleibt die Aktion trotzdem richtig, nur
+    /// wuerde eine nachgetragene Angabe auf dem verworfenen Objekt stehen – dort, wo niemand
+    /// mehr hinlookt. Deshalb wird vor jeder Rueckwirkung auf die gerade sichtbare Karte
+    /// umgebogen.
+    /// </summary>
+    private ConnectorCard LiveCard(ConnectorCard card)
+    {
+        if (_snapshot is null || string.IsNullOrEmpty(card.CardHandle))
+            return card;
+        return _snapshot.Cards.FirstOrDefault(c => c.CardHandle == card.CardHandle) ?? card;
+    }
+
     private async Task PinActionAsync(ConnectorCard card, string pinType, string operation)
     {
         var terminal = _snapshot?.Terminals.FirstOrDefault(t => string.Equals(t.CtId, card.CtId, StringComparison.OrdinalIgnoreCase));
@@ -1447,6 +1462,7 @@ public partial class ConnectorWindow : Window
     {
         if (_snapshot is null)
             return;
+        card = LiveCard(card);
         SetBusy(true, L("Lese PIN-Status …", "Reading PIN status …"));
         try
         {
@@ -1551,6 +1567,7 @@ public partial class ConnectorWindow : Window
     {
         if (_snapshot is null)
             return;
+        card = LiveCard(card);
         SetBusy(true, L("Lese Kartenzertifikate …", "Reading card certificates …"));
         try
         {
@@ -1576,6 +1593,7 @@ public partial class ConnectorWindow : Window
 
     private async Task VerifyCertificateAsync(ConnectorCard card)
     {
+        card = LiveCard(card);
         if (card.AuthCertificate is null)
             return;
         SetBusy(true, L("Prüfe Zertifikat beim Konnektor (OCSP) …", "Verifying certificate with connector (OCSP) …"));
