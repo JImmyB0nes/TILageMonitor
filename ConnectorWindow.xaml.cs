@@ -28,6 +28,11 @@ public partial class ConnectorWindow : Window
             try { _cts?.Cancel(); } catch { /* ignore */ }
         };
 
+        // Der Reiter ist der tragende Teil, die Seitenleiste bildet ihn ab – auch dann, wenn
+        // der Code woanders umschaltet (Erfolg, Fehler, fehlende Konfiguration).
+        Tabs.SelectionChanged += (_, _) => SyncNav();
+        Nav.SelectedIndex = 0;
+
         // Bereits vorhandenen Datenstand der Hintergrundüberwachung sofort anzeigen.
         var monitor = owner.ConnectorMonitor;
         if (monitor.LastSnapshot is not null)
@@ -51,6 +56,55 @@ public partial class ConnectorWindow : Window
     }
 
     private static string L(string de, string en) => LocalizationService.Pick(de, en);
+
+    /// <summary>
+    /// Seitenleiste und Reiter sind dieselbe Auswahl – der bestehende Code schaltet weiter
+    /// ueber Tabs. Rueckwaerts wird die Verknuepfung ueber den Waelter abgeschirmt, damit
+    /// keine Endlosschleife laeuft, wenn die Zuordnung von beiden Seiten angestoessen wird.
+    /// </summary>
+    private bool _syncingNav;
+
+    private void Nav_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingNav)
+            return;
+        _syncingNav = true;
+        try
+        {
+            if (Nav.SelectedIndex >= 0)
+                Tabs.SelectedIndex = Nav.SelectedIndex;
+        }
+        finally
+        {
+            _syncingNav = false;
+        }
+    }
+
+    /// <summary>Bringt die Seitenleiste auf denselben Stand wie den aktiven Reiter.</summary>
+    private void SyncNav()
+    {
+        if (_syncingNav || Tabs.SelectedIndex < 0 || Tabs.SelectedIndex >= Nav.Items.Count)
+            return;
+        _syncingNav = true;
+        try
+        {
+            Nav.SelectedIndex = Tabs.SelectedIndex;
+        }
+        finally
+        {
+            _syncingNav = false;
+        }
+    }
+
+    /// <summary>
+    /// Zaehler in der Seitenleiste. Sie zeigen die Menge, keine Staende – eine Zahl sagt,
+    /// wo man hin muss, ohne dass man die Reiter einzeln durchprobiert.
+    /// </summary>
+    private void UpdateNavCounts(ConnectorSnapshot snapshot)
+    {
+        NavCardsCount.Text = snapshot.Cards.Count > 0 ? $"  {snapshot.Cards.Count}" : "";
+        NavTerminalsCount.Text = snapshot.Terminals.Count > 0 ? $"  {snapshot.Terminals.Count}" : "";
+    }
 
     // =================================================================
     // Formular
@@ -398,10 +452,13 @@ public partial class ConnectorWindow : Window
 
         // Kennzahlen direkt im Banner, damit sie nicht als Textkoloss unter dem Titel untergehen.
         StatusChips.Children.Clear();
-        StatusChips.Children.Add(Chip(tiState, null));
-        StatusChips.Children.Add(Chip($"{snapshot.Cards.Count} {L("Karten", "cards")}", null));
-        StatusChips.Children.Add(Chip($"{snapshot.Terminals.Count} {L("Terminals", "terminals")}", null));
+        StatusChips.Children.Add(Kpi(L("TI-Status", "TI status"), tiState,
+            snapshot.Resource?.IsTiOnline == true ? "StatusOk" : snapshot.Resource?.IsTiOnline == false ? "StatusOutage" : null));
+        StatusChips.Children.Add(Kpi(L("Karten", "Cards"), snapshot.Cards.Count.ToString()));
+        StatusChips.Children.Add(Kpi(L("Terminals", "Terminals"), snapshot.Terminals.Count.ToString()));
+        StatusChips.Children.Add(Kpi(L("Abruf", "Retrieved"), snapshot.RetrievedAt.ToString("HH:mm:ss")));
 
+        UpdateNavCounts(snapshot);
         RenderAlerts(alerts, snapshot.Warnings);
         RenderConnectorInfo(snapshot);
         RenderCards(snapshot);
@@ -421,8 +478,33 @@ public partial class ConnectorWindow : Window
     }
 
     /// <summary>
-    /// Kleine Info-Kapsel: winzige Beschriftung, daneben der eigentliche Wert. Haelt
-    /// Wertelisten kompakt, statt jede Angabe in eine eigene Zeile zu zwingen.
+    /// Kennzahl im Banner: winzige Bezeichnung, darunter der Wert. So ist der Zustand auf
+    /// einen Blick lesbar, ohne dass vier gleich garte Kapseln aneinandergeklebt wirken.
+    /// </summary>
+    private Border Kpi(string label, string value, string? colorKey = null)
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMuted")
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = value,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush(colorKey ?? "TextMain"),
+            Margin = new Thickness(0, 1, 0, 0)
+        });
+        return new Border { Child = panel, Style = (Style)FindResource("KpiStyle") };
+    }
+
+    /// <summary>
+    /// Flache Info-Kapsel fuer Wertelisten. Haelt mehrere Angaben in einer Zeile, statt
+    /// jede fuer sich auf eine eigene Zeile zu zwingen.
     /// </summary>
     private Border Chip(string value, string? colorKey)
     {
@@ -432,7 +514,6 @@ public partial class ConnectorWindow : Window
             {
                 Text = value,
                 FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
                 Foreground = Brush(colorKey ?? "TextMain"),
                 TextWrapping = TextWrapping.Wrap
             },
@@ -568,136 +649,275 @@ public partial class ConnectorWindow : Window
         ConnectorInfoCard.Visibility = ConnectorInfoGrid.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>Auswahl in den Zwei-Spalten-Ansichten. Nach einem Pollen dieselbe Karte
+    /// wieder anzeigen, sonst springt die Maske beim Hintergrundaktualisieren um.</summary>
+    private ConnectorCard? _selectedCard;
+    private ConnectorCardTerminal? _selectedTerminal;
+    private bool _fillingLists;
+
+    private static IEnumerable<ConnectorCard> CardOrder(IEnumerable<ConnectorCard> cards) =>
+        cards.OrderByDescending(c => c.IsSmcB ? 0 : c.IsHba ? 1 : c.IsEgk ? 3 : 2)
+             .ThenBy(c => c.CtId, StringComparer.OrdinalIgnoreCase)
+             .ThenBy(c => c.SlotId, StringComparer.OrdinalIgnoreCase);
+
+    private static string KindOf(ConnectorCard card) =>
+        card.IsSmcB ? "SMC-B" : card.IsHba ? "HBA" : card.IsEgk ? "eGK"
+        : string.IsNullOrWhiteSpace(card.CardType) ? "KARTE" : card.CardType;
+
     private void RenderCards(ConnectorSnapshot snapshot)
     {
-        CardsPanel.Children.Clear();
-        var terminals = snapshot.Terminals.ToDictionary(t => t.CtId, t => t, StringComparer.OrdinalIgnoreCase);
+        // IndexTerminals statt ToDictionary: meldet der Konnektor dieselbe CtId zweimal,
+        // wirft ein ToDictionary eine Ausnahme aus der Doppelkennung.
+        var terminals = IndexTerminals(snapshot);
+        var ordered = CardOrder(snapshot.Cards).ToList();
 
-        foreach (var card in snapshot.Cards
-                     .OrderBy(c => c.IsSmcB ? 0 : c.IsHba ? 1 : c.IsEgk ? 3 : 2)
-                     .ThenBy(c => c.CtId)
-                     .ThenBy(c => c.SlotId))
+        // Liste aufbauen. Der frueheren Fassung ist der Stapel Karten durch eine Liste
+        // ersetzt – die Auswahl bleibt erhalten, der Detailtext steht rechts.
+        // Die Auswahl zuweisen, ohne dass der Umschalter zweimal laeuert – beim Pollen
+        // wird dieselbe Karte nur einmal neu aufgebaut.
+        _fillingLists = true;
+        try
         {
-            var panel = new StackPanel();
+            CardsList.Items.Clear();
+            foreach (var card in ordered)
+                CardsList.Items.Add(new ListBoxItem { Tag = card, Content = CardRow(card, terminals) });
 
-            // Kopfzeile: Art-Abzeichen, Name, rechts der grobe Zustand. Ein Blick, keine Textwand.
-            var header = new Grid();
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            CardsCountText.Text = ordered.Count == 0
+                ? L("keine Karten gefunden", "no cards found")
+                : L($"{ordered.Count} gesteckt", $"{ordered.Count} inserted");
 
-            var kind = card.IsSmcB ? "SMC-B" : card.IsHba ? "HBA" : card.IsEgk ? "eGK"
-                : string.IsNullOrWhiteSpace(card.CardType) ? "KARTE" : card.CardType;
-            var badge = Badge(kind, card.IsSmcB || card.IsHba ? "StatusMaintenance" : null);
-            badge.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(badge, 0);
-            header.Children.Add(badge);
+            var keep = ordered.FirstOrDefault(c => ReferenceEquals(c, _selectedCard)
+                                                  || (!string.IsNullOrEmpty(_selectedCard?.CardHandle)
+                                                      && c.CardHandle == _selectedCard!.CardHandle));
+            _selectedCard = keep ?? ordered.FirstOrDefault();
+            CardsList.SelectedIndex = _selectedCard is null ? -1 : ordered.IndexOf(_selectedCard);
+            RenderCardDetail(_selectedCard, terminals);
+        }
+        finally
+        {
+            _fillingLists = false;
+        }
+    }
 
-            var title = new TextBlock
+    /// <summary>Zeile in der Auswahlliste: Kante, Art, Name, eine winzige Herkunftszeile.</summary>
+    private UIElement CardRow(ConnectorCard card, IReadOnlyDictionary<string, ConnectorCardTerminal> terminals)
+    {
+        var worstPin = WorstPinState(card);
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var edge = new Border
+        {
+            Background = AccentForState(worstPin),
+            CornerRadius = new CornerRadius(3, 0, 0, 3),
+            Margin = new Thickness(0, 2)
+        };
+        Grid.SetColumn(edge, 0);
+        grid.Children.Add(edge);
+
+        var body = new StackPanel { Margin = new Thickness(11, 2, 0, 2) };
+        // Orientation gibt es in WPF wie in WinForms – mit UseWindowsForms laeuft sonst
+        // eine Mehrdeutigkeitspruefung, deshalb mit dem WPF-Typnamen qualifizieren.
+        var line = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        line.Children.Add(Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null));
+        line.Children.Add(new TextBlock
+        {
+            Text = card.IsSmcB || card.IsHba ? card.CardHolderName : card.DisplayName,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMain"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+        body.Children.Add(line);
+
+        var ctLabel = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
+        body.Children.Add(new TextBlock
+        {
+            Text = $"{ctLabel} · Slot {card.SlotId}",
+            FontSize = 11,
+            Foreground = Brush("TextMuted"),
+            Margin = new Thickness(0, 2, 0, 0)
+        });
+
+        Grid.SetColumn(body, 1);
+        grid.Children.Add(body);
+        return grid;
+    }
+
+    private void CardsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fillingLists)
+            return;
+        _selectedCard = CardsList.SelectedItem is ListBoxItem { Tag: ConnectorCard c } ? c : _selectedCard;
+        RenderCardDetail(_selectedCard, IndexTerminals(_snapshot));
+    }
+
+    private Dictionary<string, ConnectorCardTerminal> IndexTerminals(ConnectorSnapshot? snapshot) =>
+        (snapshot ?? new ConnectorSnapshot()).Terminals
+            .GroupBy(t => t.CtId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+    private void RenderCardDetail(ConnectorCard? card, IReadOnlyDictionary<string, ConnectorCardTerminal> terminals)
+    {
+        CardDetailPanel.Children.Clear();
+        if (card is null)
+        {
+            CardDetailPanel.Children.Add(new TextBlock
             {
-                Text = card.DisplayName,
-                FontSize = 15,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Brush("TextMain"),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(10, 0, 0, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            Grid.SetColumn(title, 1);
-            header.Children.Add(title);
-
-            var worstPin = WorstPinState(card);
-            if (worstPin is not null)
-            {
-                var stateBadge = Badge(worstPin, worstPin.Contains("iert", StringComparison.Ordinal) ? "StatusOk" : "StatusPartial");
-                stateBadge.VerticalAlignment = VerticalAlignment.Center;
-                Grid.SetColumn(stateBadge, 2);
-                header.Children.Add(stateBadge);
-            }
-            panel.Children.Add(header);
-
-            var ctLabel = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
-            var details = new List<string>
-            {
-                $"{L("Terminal", "Terminal")}: {ctLabel} · Slot {card.SlotId}",
-            };
-            if (!string.IsNullOrWhiteSpace(card.Iccsn)) details.Add($"ICCSN: {card.Iccsn}");
-            if (!string.IsNullOrWhiteSpace(card.CardVersion)) details.Add($"COS: {card.CardVersion}");
-            if (card.InsertTime is { } inserted) details.Add(L($"gesteckt seit {inserted:dd.MM.yyyy HH:mm}", $"inserted {inserted:yyyy-MM-dd HH:mm}"));
-            if (card.IsEgk && !string.IsNullOrWhiteSpace(card.Kvnr)) details.Add($"KVNR: {card.Kvnr}");
-
-            var cert = card.AuthCertificate;
-            // Alle gelesenen Refs (C.AUT/C.ENC/C.SIG/C.QES) nebeneinander – so faellt ein
-            // abgelaufenes QES sofort auf, auch wenn C.AUT noch monatelang gueltig ist.
-            if (card.Certificates.Count > 0)
-            {
-                foreach (var c in card.Certificates.OrderBy(c => c.CertRef, StringComparer.Ordinal))
-                {
-                    var days = (int)Math.Floor((c.NotAfter - DateTime.Now).TotalDays);
-                    var label = ConnectorProtocol.KnownCertRefs.FirstOrDefault(k => k.Ref == c.CertRef).Label;
-                    details.Add(L($"{c.CertRef} bis {c.NotAfter:dd.MM.yyyy} ({days} Tage)", $"{c.CertRef} until {c.NotAfter:yyyy-MM-dd} ({days} days)"));
-                    if (!string.IsNullOrWhiteSpace(label) && days <= 0)
-                        details.Add(label);
-                }
-            }
-            else if (card.EarliestCertificateExpiry is { } notAfter)
-            {
-                var days = (int)Math.Floor((notAfter - DateTime.Now).TotalDays);
-                details.Add(L($"Zertifikat gültig bis {notAfter:dd.MM.yyyy} ({days} Tage)", $"Certificate valid until {notAfter:yyyy-MM-dd} ({days} days)"));
-            }
-            if (!string.IsNullOrWhiteSpace(cert?.TelematikId)) details.Add($"Telematik-ID: {cert!.TelematikId}");
-            if (!string.IsNullOrWhiteSpace(cert?.Profession)) details.Add(L("Rolle", "Role") + $": {cert!.Profession}");
-            if (!string.IsNullOrWhiteSpace(cert?.Organization) && cert!.Organization != card.CardHolderName) details.Add(L("Organisation", "Organization") + $": {cert.Organization}");
-            if (cert is not null) details.Add($"{cert.CertRef} · {cert.KeyAlgorithm} · {L("Aussteller", "Issuer")} {cert.Issuer}");
-
-            var meta = new TextBlock
-            {
-                Text = string.Join("   ·   ", details),
-                FontSize = 12,
-                Foreground = Brush("TextMuted"),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 5, 0, 8)
-            };
-            panel.Children.Add(meta);
-
-            // PIN-Zeilen als schmale Tabellenzeilen, damit die Buttons nicht umbiegen.
-            foreach (var pinType in card.PinTypes)
-            {
-                var state = card.PinStates.FirstOrDefault(p => p.PinType == pinType);
-                panel.Children.Add(BuildPinRow(card, pinType, state));
-            }
-
-            if (card.SupportsPinManagement)
-            {
-                var actions = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
-                if (cert is not null)
-                    actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card)));
-                actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card)));
-                actions.Children.Add(ActionButton(L("PIN-Status neu lesen", "Re-read PIN status"), async () => await RefreshPinStatusAsync(card)));
-                // Freigabepruefung nur auf Knopfdruck: VerifyCard kann je nach Firmware eine
-                // PIN-Abfrage am Terminal ausloesen, was im Hintergrundpolling unangenehme
-                // Folgen haette (Terminal sperrt sich, wenn jemand die PIN nicht kennt).
-                actions.Children.Add(ActionButton(L("Freigabe prüfen (VSDM)", "Check access (VSDM)"), async () => await CheckAccessAsync(card)));
-                panel.Children.Add(actions);
-            }
-
-            CardsPanel.Children.Add(new Border
-            {
-                Child = panel,
-                Background = Brush("ChipBackground"),
-                BorderBrush = Brush("BorderSubtle"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(16, 14, 16, 14),
-                Margin = new Thickness(0, 0, 0, 10)
+                Text = L("Keine Karte gewaehlt.", "No card selected."),
+                Foreground = Brush("TextMuted")
             });
+            return;
         }
 
-        if (snapshot.Cards.Count == 0)
-            CardsPanel.Children.Add(new TextBlock { Text = L("Keine Karten gefunden.", "No cards found."), Foreground = Brush("TextMuted") });
+        // Kopfzeile: Art-Abzeichen, Name, rechts der grobe Zustand. Ein Blick, keine Textwand.
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        CardsCard.Visibility = Visibility.Visible;
+        var badge = Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null);
+        badge.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(badge, 0);
+        header.Children.Add(badge);
+
+        var title = new TextBlock
+        {
+            Text = card.CardHolderName.Length > 0 ? card.CardHolderName : card.DisplayName,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMain"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        Grid.SetColumn(title, 1);
+        header.Children.Add(title);
+
+        var worstPin = WorstPinState(card);
+        if (worstPin is not null)
+        {
+            var stateBadge = Badge(worstPin, StateColorKey(worstPin));
+            stateBadge.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(stateBadge, 2);
+            header.Children.Add(stateBadge);
+        }
+        CardDetailPanel.Children.Add(header);
+
+        var ctLabel = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
+        var details = new List<string>
+        {
+            $"{L("Terminal", "Terminal")}: {ctLabel} · Slot {card.SlotId}",
+        };
+        if (!string.IsNullOrWhiteSpace(card.Iccsn)) details.Add($"ICCSN: {card.Iccsn}");
+        if (!string.IsNullOrWhiteSpace(card.CardVersion)) details.Add($"COS: {card.CardVersion}");
+        if (card.InsertTime is { } inserted) details.Add(L($"gesteckt seit {inserted:dd.MM.yyyy HH:mm}", $"inserted {inserted:yyyy-MM-dd HH:mm}"));
+        if (card.IsEgk && !string.IsNullOrWhiteSpace(card.Kvnr)) details.Add($"KVNR: {card.Kvnr}");
+
+        var cert = card.AuthCertificate;
+        // Alle gelesenen Refs (C.AUT/C.ENC/C.SIG/C.QES) nebeneinander – so faellt ein
+        // abgelaufenes QES sofort auf, auch wenn C.AUT noch monatelang gueltig ist.
+        if (card.Certificates.Count > 0)
+        {
+            foreach (var c in card.Certificates.OrderBy(c => c.CertRef, StringComparer.Ordinal))
+            {
+                var days = (int)Math.Floor((c.NotAfter - DateTime.Now).TotalDays);
+                var label = ConnectorProtocol.KnownCertRefs.FirstOrDefault(k => k.Ref == c.CertRef).Label;
+                details.Add(L($"{c.CertRef} bis {c.NotAfter:dd.MM.yyyy} ({days} Tage)", $"{c.CertRef} until {c.NotAfter:yyyy-MM-dd} ({days} days)"));
+                if (!string.IsNullOrWhiteSpace(label) && days <= 0)
+                    details.Add(label);
+            }
+        }
+        else if (card.EarliestCertificateExpiry is { } notAfter)
+        {
+            var days = (int)Math.Floor((notAfter - DateTime.Now).TotalDays);
+            details.Add(L($"Zertifikat gültig bis {notAfter:dd.MM.yyyy} ({days} Tage)", $"Certificate valid until {notAfter:yyyy-MM-dd} ({days} days)"));
+        }
+        if (!string.IsNullOrWhiteSpace(cert?.TelematikId)) details.Add($"Telematik-ID: {cert!.TelematikId}");
+        if (!string.IsNullOrWhiteSpace(cert?.Profession)) details.Add(L("Rolle", "Role") + $": {cert!.Profession}");
+        if (!string.IsNullOrWhiteSpace(cert?.Organization) && cert!.Organization != card.CardHolderName) details.Add(L("Organisation", "Organization") + $": {cert.Organization}");
+        if (cert is not null) details.Add($"{cert.CertRef} · {cert.KeyAlgorithm} · {L("Aussteller", "Issuer")} {cert.Issuer}");
+
+        // Kennzahlen als Kapseln statt Textwand – dieselbe Handschrift wie im Banner.
+        var metaRow = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
+        foreach (var part in details)
+            metaRow.Children.Add(Chip(part, null));
+        CardDetailPanel.Children.Add(metaRow);
+
+        CardDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12) });
+
+        var pinTitle = new TextBlock
+        {
+            Text = L("PIN-Zustand", "PIN state"),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMuted"),
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        CardDetailPanel.Children.Add(pinTitle);
+
+        // PIN-Zeilen als schmale Tabellenzeilen, damit die Buttons nicht umbiegen.
+        foreach (var pinType in card.PinTypes)
+        {
+            var state = card.PinStates.FirstOrDefault(p => p.PinType == pinType);
+            CardDetailPanel.Children.Add(BuildPinRow(card, pinType, state));
+        }
+        if (card.PinTypes.Count == 0)
+            CardDetailPanel.Children.Add(new TextBlock
+            {
+                Text = L("Diese Karte fuehrt keine PIN-Verwaltung ueber den Konnektor.", "This card has no PIN management via the connector."),
+                FontSize = 12,
+                Foreground = Brush("TextMuted")
+            });
+
+        if (card.SupportsPinManagement)
+        {
+            var actions = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
+            if (cert is not null)
+                actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card)));
+            actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card)));
+            actions.Children.Add(ActionButton(L("PIN-Status neu lesen", "Re-read PIN status"), async () => await RefreshPinStatusAsync(card)));
+            // Freigabepruefung nur auf Knopfdruck: VerifyCard kann je nach Firmware eine
+            // PIN-Abfrage am Terminal ausloesen, was im Hintergrundpolling unangenehme
+            // Folgen haette (Terminal sperrt sich, wenn jemand die PIN nicht kennt).
+            actions.Children.Add(ActionButton(L("Freigabe prüfen (VSDM)", "Check access (VSDM)"), async () => await CheckAccessAsync(card)));
+            CardDetailPanel.Children.Add(actions);
+        }
+
+        CardDetailPanel.Children.Add(new TextBlock
+        {
+            Text = L("PIN-Eingaben erfolgen ausschließlich am Kartenterminal – die App sieht keine PIN oder PUK.",
+                     "PIN entry happens exclusively at the card terminal – the app never sees a PIN or PUK."),
+            FontSize = 11,
+            Foreground = Brush("TextMuted"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 14, 0, 0)
+        });
     }
+
+    /// <summary>Farbe der Linkskante, passend zum grobsten PIN-Zustand der Karte.</summary>
+    /// <remarks>
+    /// Die Zuordnung vergleicht die vollen Meldungen, nicht Teilworter. "nicht verifiziert"
+    /// enthaelt das Wortende von "verifiziert" und waere bei einer Teilpruefung rosa bis gruen,
+    /// obwohl die Karte gerade nicht einsatzfaehig ist. Dasselbe Muster gilt fuer das Abzeichen.
+    /// </remarks>
+    public static string StateColorKey(string? worstPin)
+        => worstPin switch
+        {
+            null => "TextMuted",
+            "gesperrt" or "blocked" => "StatusOutage",
+            "verifiziert" or "verified" => "StatusOk",
+            _ => "StatusPartial"
+        };
+
+    private static System.Windows.Media.Brush AccentForState(string? worstPin)
+        => BrushStatic(StateColorKey(worstPin));
+
+    private static System.Windows.Media.Brush BrushStatic(string key)
+        => (System.Windows.Media.Brush)Application.Current.Resources[key];
 
     /// <summary>Kuerzester brauchbare PIN-Gesamtzustand fuer das Abzeichen der Karte.</summary>
     private static string? WorstPinState(ConnectorCard card)
@@ -830,74 +1050,200 @@ public partial class ConnectorWindow : Window
 
     private void RenderTerminals(ConnectorSnapshot snapshot)
     {
-        TerminalsPanel.Children.Clear();
-        foreach (var t in snapshot.Terminals.OrderBy(t => t.CtId))
+        var ordered = snapshot.Terminals.OrderBy(t => t.CtId, StringComparer.OrdinalIgnoreCase).ToList();
+
+        _fillingLists = true;
+        try
         {
-            var cards = snapshot.Cards.Where(c => string.Equals(c.CtId, t.CtId, StringComparison.OrdinalIgnoreCase))
-                .Select(c => $"Slot {c.SlotId}: {c.DisplayName}");
-            var state = t.Connected switch
+            TerminalsList.Items.Clear();
+            foreach (var t in ordered)
+                TerminalsList.Items.Add(new ListBoxItem { Tag = t, Content = TerminalRow(t, snapshot) });
+
+            TerminalsCountText.Text = ordered.Count == 0
+                ? L("keine Terminals gefunden", "no terminals found")
+                : L($"{ordered.Count} gemeldet", $"{ordered.Count} reported");
+
+            var keep = ordered.FirstOrDefault(t => ReferenceEquals(t, _selectedTerminal)
+                                                  || (!string.IsNullOrEmpty(_selectedTerminal?.CtId)
+                                                      && t.CtId == _selectedTerminal!.CtId));
+            _selectedTerminal = keep ?? ordered.FirstOrDefault();
+            TerminalsList.SelectedIndex = _selectedTerminal is null ? -1 : ordered.IndexOf(_selectedTerminal);
+            RenderTerminalDetail(_selectedTerminal, snapshot);
+        }
+        finally
+        {
+            _fillingLists = false;
+        }
+    }
+
+    /// <summary>Zeile in der Auswahlliste: Kante in Verbindungsfarbe, Name, eine Herkunftszeile.</summary>
+    private UIElement TerminalRow(ConnectorCardTerminal t, ConnectorSnapshot snapshot)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var edge = new Border
+        {
+            Background = Brush(t.Connected == false ? "StatusPartial" : "StatusOk"),
+            CornerRadius = new CornerRadius(3, 0, 0, 3),
+            Margin = new Thickness(0, 2)
+        };
+        Grid.SetColumn(edge, 0);
+        grid.Children.Add(edge);
+
+        var body = new StackPanel { Margin = new Thickness(11, 2, 0, 2) };
+        body.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(t.Name) ? t.CtId : t.Name,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMain"),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+        var under = new List<string> { t.CtId };
+        if (!string.IsNullOrWhiteSpace(t.IpAddress)) under.Add(t.IpAddress);
+        var here = snapshot.Cards.Count(c => string.Equals(c.CtId, t.CtId, StringComparison.OrdinalIgnoreCase));
+        under.Add(L($"{here} Karten", $"{here} cards"));
+        body.Children.Add(new TextBlock
+        {
+            Text = string.Join(" · ", under),
+            FontSize = 11,
+            Foreground = Brush("TextMuted"),
+            Margin = new Thickness(0, 2, 0, 0)
+        });
+
+        Grid.SetColumn(body, 1);
+        grid.Children.Add(body);
+        return grid;
+    }
+
+    private void TerminalsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fillingLists)
+            return;
+        _selectedTerminal = TerminalsList.SelectedItem is ListBoxItem { Tag: ConnectorCardTerminal t } ? t : _selectedTerminal;
+        RenderTerminalDetail(_selectedTerminal, _snapshot);
+    }
+
+    private void RenderTerminalDetail(ConnectorCardTerminal? t, ConnectorSnapshot? snapshot)
+    {
+        TerminalDetailPanel.Children.Clear();
+        if (t is null)
+        {
+            TerminalDetailPanel.Children.Add(new TextBlock
             {
-                true => L("verbunden", "connected"),
-                false => L("NICHT verbunden", "NOT connected"),
-                null => L("Status unbekannt", "status unknown")
-            };
-            var parts = new List<string> { state };
-            if (!string.IsNullOrWhiteSpace(t.IpAddress)) parts.Add($"IP {t.IpAddress}");
-            if (!string.IsNullOrWhiteSpace(t.MacAddress)) parts.Add($"MAC {t.MacAddress}");
-            if (t.Slots is { } slots) parts.Add($"{slots} Slots");
-            if (t.IsPhysical == false) parts.Add(L("virtuell", "virtual"));
-            var cardText = string.Join(" · ", cards);
-            if (cardText.Length > 0) parts.Add(cardText);
+                Text = L("Kein Terminal gewaehlt.", "No terminal selected."),
+                Foreground = Brush("TextMuted")
+            });
+            return;
+        }
+        var cards = (snapshot?.Cards ?? new List<ConnectorCard>())
+            .Where(c => string.Equals(c.CtId, t.CtId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
-            var body = new StackPanel();
-            var header = new Grid();
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var state = t.Connected switch
+        {
+            true => L("verbunden", "connected"),
+            false => L("NICHT verbunden", "NOT connected"),
+            null => L("Status unbekannt", "status unknown")
+        };
 
-            var title = new TextBlock
-            {
-                Text = t.Label,
-                FontSize = 14,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Brush("TextMain"),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            Grid.SetColumn(title, 1);
-            header.Children.Add(title);
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var title = new TextBlock
+        {
+            Text = t.Label,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMain"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        Grid.SetColumn(title, 0);
+        header.Children.Add(title);
+        var stateBadge = Badge(state, t.Connected == false ? "StatusPartial" : "StatusOk");
+        stateBadge.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(stateBadge, 1);
+        header.Children.Add(stateBadge);
+        TerminalDetailPanel.Children.Add(header);
 
-            var stateBadge = Badge(state, t.Connected == false ? "StatusPartial" : "StatusOk");
-            stateBadge.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(stateBadge, 2);
-            header.Children.Add(stateBadge);
-            body.Children.Add(header);
+        // Technische Werte als Kapseln – dieselbe Handschrift wie bei der Karte.
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(t.IpAddress)) parts.Add($"IP {t.IpAddress}");
+        if (!string.IsNullOrWhiteSpace(t.MacAddress)) parts.Add($"MAC {t.MacAddress}");
+        if (t.Slots is { } slots) parts.Add($"{slots} Slots");
+        if (t.IsPhysical == false) parts.Add(L("virtuell", "virtual"));
+        if (!string.IsNullOrWhiteSpace(t.Details)) parts.Add(t.Details);
+        if (t.Workplaces.Count > 0)
+            parts.Add(L("Arbeitsplaetze: ", "Workplaces: ") + string.Join(", ", t.Workplaces));
 
-            // Technische Werte als Kapseln: zwei Terminals untereinander waeren eine halbe
-            // Bildschirmhohe, aneinandergereiht belegt es nur eine Zeile.
-            var chips = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+        if (parts.Count > 0)
+        {
+            var chips = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
             foreach (var part in parts)
                 chips.Children.Add(Chip(part, null));
-            if (!string.IsNullOrWhiteSpace(t.Details))
-                chips.Children.Add(Chip(t.Details, null));
-            if (t.Workplaces.Count > 0)
-                chips.Children.Add(Chip(L("Arbeitsplaetze: ", "Workplaces: ") + string.Join(", ", t.Workplaces), null));
-            body.Children.Add(chips);
-
-            TerminalsPanel.Children.Add(new Border
-            {
-                Child = body,
-                Background = Brush("ChipBackground"),
-                BorderBrush = Brush("BorderSubtle"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(16, 14, 16, 14),
-                Margin = new Thickness(0, 0, 0, 10)
-            });
+            TerminalDetailPanel.Children.Add(chips);
         }
-        if (snapshot.Terminals.Count == 0)
-            TerminalsPanel.Children.Add(new TextBlock { Text = L("Keine Kartenterminals gefunden.", "No card terminals found."), Foreground = Brush("TextMuted") });
-        TerminalsCard.Visibility = Visibility.Visible;
+
+        TerminalDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12) });
+
+        var cardTitle = new TextBlock
+        {
+            Text = L("Gesteckte Karten", "Inserted cards"),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMuted"),
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        TerminalDetailPanel.Children.Add(cardTitle);
+
+        if (cards.Count == 0)
+        {
+            TerminalDetailPanel.Children.Add(new TextBlock
+            {
+                Text = L("In diesem Terminal steckt keine Karte.", "No card is inserted in this terminal."),
+                FontSize = 12,
+                Foreground = Brush("TextMuted")
+            });
+            return;
+        }
+
+        foreach (var card in CardOrder(cards))
+        {
+            var worstPin = WorstPinState(card);
+            var row = new Grid { Margin = new Thickness(0, 4) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var badge = Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null);
+            badge.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(badge, 0);
+            row.Children.Add(badge);
+
+            var name = new TextBlock
+            {
+                Text = $"Slot {card.SlotId} · {card.DisplayName}",
+                FontSize = 13,
+                Foreground = Brush("TextMain"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 0, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetColumn(name, 1);
+            row.Children.Add(name);
+
+            if (worstPin is not null)
+            {
+                var pinBadge = Badge(worstPin, StateColorKey(worstPin));
+                pinBadge.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(pinBadge, 2);
+                row.Children.Add(pinBadge);
+            }
+            TerminalDetailPanel.Children.Add(row);
+        }
     }
 
     private void RenderServices(ConnectorSnapshot snapshot)
@@ -1309,7 +1655,12 @@ public partial class ConnectorWindow : Window
         RefreshButton.IsEnabled = !busy;
         SaveConnectButton.IsEnabled = !busy;
         TestButton.IsEnabled = !busy;
-        CardsPanel.IsEnabled = !busy;
+        // Die Karten- und Terminallisten enthalten die Knopfe, die waehrend eines laufenden
+        // Abrufs nichts bringen – doppelte Aufrufe waeren die Folge.
+        CardsList.IsEnabled = !busy;
+        TerminalsList.IsEnabled = !busy;
+        CardDetailPanel.IsEnabled = !busy;
+        TerminalDetailPanel.IsEnabled = !busy;
         Cursor = busy ? System.Windows.Input.Cursors.AppStarting : null;
         if (text is not null)
             FooterText.Text = text;
