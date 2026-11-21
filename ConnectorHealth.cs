@@ -93,9 +93,23 @@ public static class ConnectorHealth
                 }
             }
 
+            // QES zuerst bewerten: sein Ablauf hat eine eigene Erklaerung (qualifizierte
+            // Signaturen scheitern, die Karte wirkt sonst einwandfrei) und faellt danach aus
+            // der allgemeinen Zahlung heraus. Blaiebe er drin, stuenden zwei Meldungen fuer
+            // denselben Grund – der Nutzer hielte das fuer zwei Gebrechen.
+            var qes = card.ExpiredQesAt(now);
+            if (qes is not null)
+            {
+                alerts.Add(new ConnectorAlert(
+                    $"qes-expired-{id}",
+                    L($"{card.DisplayName}: QES-Zertifikat abgelaufen", $"{card.DisplayName}: QES certificate expired"),
+                    L($"Das C.QES-Zertifikat ist seit {qes.NotAfter:dd.MM.yyyy} abgelaufen – qualifizierte Signaturen schlagen fehl, obwohl die Karte sonst einwandfrei erscheint.", $"The C.QES certificate expired on {qes.NotAfter:yyyy-MM-dd} – qualified signatures will fail although the card otherwise looks fine."),
+                    ToastUrgency.Error));
+            }
+
             // Fruestes Ablaufdatum aller gelesenen Zertifikate, nicht nur von C.AUT: ein
             // abgelaufenes C.QES behindert das Signieren, ohne dass C.AUT irgendetwo auffällt.
-            var expiry = card.EarliestCertificateExpiry;
+            var expiry = card.EarliestCertificateExpiry(qes);
             if (expiry is { } notAfter)
             {
                 var days = (int)Math.Floor((notAfter - now).TotalDays);
@@ -119,15 +133,6 @@ public static class ConnectorHealth
                 }
             }
 
-            // QES abgelaufen: Karte steckt, PIN passt – qualifizierte Signaturen scheitern trotzdem.
-            if (card.ExpiredQesAt(now) is { } qes)
-            {
-                alerts.Add(new ConnectorAlert(
-                    $"qes-expired-{id}",
-                    L($"{card.DisplayName}: QES-Zertifikat abgelaufen", $"{card.DisplayName}: QES certificate expired"),
-                    L($"Das C.QES-Zertifikat ist seit {qes.NotAfter:dd.MM.yyyy} abgelaufen – qualifizierte Signaturen schlagen fehl, obwohl die Karte sonst einwandfrei erscheint.", $"The C.QES certificate expired on {qes.NotAfter:yyyy-MM-dd} – qualified signatures will fail although the card otherwise looks fine."),
-                    ToastUrgency.Error));
-            }
         }
 
         return alerts;

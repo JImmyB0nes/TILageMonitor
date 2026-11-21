@@ -180,10 +180,21 @@ public sealed class ConnectorCard
     public List<ConnectorCertificateInfo> Certificates { get; set; } = new();
 
     /// <summary>Fruehestes Ablaufdatum aller gelesenen Zertifikate.</summary>
-    public DateTime? EarliestCertificateExpiry =>
-        Certificates.Count > 0
-            ? Certificates.Min(c => c.NotAfter)
-            : AuthCertificate?.NotAfter ?? CertificateExpirationDate;
+    public DateTime? EarliestCertificateExpiry => EarliestCertificateExpiry(null);
+
+    /// <summary>
+    /// Fruehestes Ablaufdatum, wobei ein bereits gemeldetes Zertifikat herausfaellt. Ohne
+    /// die Ausnahmeecke melden zwei Stellen denselben abgelaufenen Grund – der allgemeine
+    /// Alarm nennt die Referenz, der QES-Alarm erklaert, dass qualifizierte Signaturen
+    /// scheitern. Beides auf einmal haelt der Nutzer fuer zwei Gebrechen, waehrend es eines ist.
+    /// </summary>
+    public DateTime? EarliestCertificateExpiry(ConnectorCertificateInfo? alreadyReported)
+    {
+        if (Certificates.Count == 0)
+            return AuthCertificate?.NotAfter ?? CertificateExpirationDate;
+        var rest = Certificates.Where(c => !ReferenceEquals(c, alreadyReported)).ToList();
+        return rest.Count == 0 ? null : rest.Min(c => c.NotAfter);
+    }
 
     /// <summary>
     /// QES-Zertifikat vorhanden, aber zum Zeitpunkt <paramref name="now"/> abgelaufen – dann

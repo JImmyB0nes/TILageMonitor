@@ -754,8 +754,39 @@ public sealed class ConnectorHealthTests
 
         var keys = ConnectorHealth.Evaluate(snapshot, 60, Now).Select(a => a.Key).ToList();
         Assert.Contains("qes-expired-2", keys);
-        // Das frueheste Ablaufdatum fuehrt zusaetzlich zur regulaeren Warnung, nicht ins Leere.
-        Assert.Contains("cert-expired-2", keys);
+        // Das abgelaufene C.QES ist hier das frueheste Ablaufdatum. Waere es zusaetzlich
+        // als allgemeine Warnung gemeldet, stuenden zwei Meldungen fuer denselben Grund – der
+        // Nutzer hielte das fuer zwei Gebrechen, und die groessere Erklaerung ginge unter.
+        Assert.DoesNotContain("cert-expired-2", keys);
+    }
+
+    /// <summary>
+    /// Die Ausnahme gilt nur fuer das eine Zertifikat, das schon gemeldet ist. Ein andres
+    /// laeuft weiter zur selben Zeit ab, und das faellt unter dem QES-Alarm durch.
+    /// </summary>
+    [Fact]
+    public void A_second_expired_certificate_is_still_reported_alongside_the_qes()
+    {
+        var snapshot = new ConnectorSnapshot
+        {
+            Cards =
+            [
+                new ConnectorCard
+                {
+                    CardType = "HBA", Iccsn = "3",
+                    PinStates = [new ConnectorPinState { PinType = "PIN.CH", Status = "VERIFIED" }],
+                    Certificates =
+                    [
+                        new ConnectorCertificateInfo { CertRef = "C.AUT", NotAfter = new DateTime(2026, 9, 1) },
+                        new ConnectorCertificateInfo { CertRef = "C.QES", NotAfter = new DateTime(2026, 10, 1) }
+                    ]
+                }
+            ]
+        };
+
+        var keys = ConnectorHealth.Evaluate(snapshot, 60, Now).Select(a => a.Key).ToList();
+        Assert.Contains("qes-expired-3", keys);
+        Assert.Contains("cert-expired-3", keys);
     }
 
     [Fact]
