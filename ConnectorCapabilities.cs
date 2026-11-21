@@ -21,7 +21,7 @@ public static class ConnectorCapabilities
     /// Versuchsfolge für den Mandanten-Radius. Ist nichts bekannt, zuerst der Radius, weil er
     /// nach gemSpec_Kon der Regelfall ist; ist etwas bekannt, genau dieses eine Mal.
     /// </summary>
-    public static bool[] MandantWideAttempts(bool? known) => known.HasValue ? [known.Value] : [true, false];
+    public static bool[] MandantWideAttempts(bool? known) => known.HasValue ? new[] { known.Value } : [true, false];
 
     /// <summary>Null, wenn dieser Rechner noch keinen Versuch gehabt hat.</summary>
     public static bool? GetMandantWide(string host) =>

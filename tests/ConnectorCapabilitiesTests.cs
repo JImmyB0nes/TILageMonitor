@@ -23,7 +23,7 @@ public sealed class ConnectorCapabilitiesTests
     {
         var attempts = ConnectorCapabilities.MandantWideAttempts(ConnectorCapabilities.GetMandantWide(UnseenHost));
 
-        Assert.Equal([true, false], attempts);
+        Assert.Equal(new bool[] { true, false }, attempts);
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public sealed class ConnectorCapabilitiesTests
 
         Assert.Null(ConnectorCapabilities.GetMandantWide(host));
         Assert.Null(ConnectorCapabilities.GetEventNamespace(host));
-        Assert.Equal([true, false], ConnectorCapabilities.MandantWideAttempts(ConnectorCapabilities.GetMandantWide(host)));
+        Assert.Equal(new bool[] { true, false }, ConnectorCapabilities.MandantWideAttempts(ConnectorCapabilities.GetMandantWide(host)));
     }
 
     /// <summary>

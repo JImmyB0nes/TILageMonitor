@@ -398,9 +398,8 @@ public sealed class ConnectorMonitor : IDisposable
     {
         var ns = ConnectorCapabilities.GetEventNamespace(_settingsProvider().Connector.Host)
                  ?? ConnectorProtocol.DefaultEventServiceNs;
-        return ["CardInserted", "CardRemoved", "CardTerminalConnected", "CardTerminalDisconnected", "StatusChanged"]
-            .Select(name => ConnectorProtocol.EventTopic(ns, name))
-            .ToList();
+        string[] names = ["CardInserted", "CardRemoved", "CardTerminalConnected", "CardTerminalDisconnected", "StatusChanged"];
+        return names.Select(name => ConnectorProtocol.EventTopic(ns, name)).ToList();
     }
 
     private void OnEvent(ConnectorEvent evt)
