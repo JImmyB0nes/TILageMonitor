@@ -200,6 +200,13 @@ public sealed class ConnectorClient : IDisposable
             {
                 var answer = await PostAsync(serviceName, operation, ns, endpoint, envelope, timeout, ct);
                 _okByService[serviceName] = _okByService.TryGetValue(serviceName, out var done) ? done + 1 : 1;
+
+                // Der Namespace, mit dem der EventService antwortet, ist auch derjenige, mit dem
+                // ein Abo Erfolg haben kann. Merkt man sich ihn, braucht spaeter kein Topic mit
+                // einer Version gebaut zu werden, die dieser Konnektor nicht kennt.
+                if (string.Equals(serviceName, "EventService", StringComparison.OrdinalIgnoreCase))
+                    ConnectorCapabilities.SetEventNamespace(_settings.Host, candidate);
+
                 return answer;
             }
             catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
@@ -346,36 +353,61 @@ public sealed class ConnectorClient : IDisposable
         return _directory;
     }
 
-    public async Task<List<ConnectorCard>> GetCardsAsync(CancellationToken ct)
+    /// <summary>
+    /// Faelt der Mandanten-Radius bei einer Operation, die ihn schon einmal akzeptiert hat, ist
+    /// das kein Grund, die Eigenart des Konnektors zu bestaetigen. Ein Konnektor, der auf "true"
+    /// bestaendig mit 4000 antwortet, haette sonst bei jedem Poll zwei zusaetzliche Roundtrips.
+    /// </summary>
+    private async Task<List<ConnectorCard>> GetCardsAsync(CancellationToken ct)
     {
-        try
+        foreach (var wide in ConnectorCapabilities.MandantWideAttempts(ConnectorCapabilities.GetMandantWide(_settings.Host)))
         {
-            return ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
-                ns => ConnectorProtocol.GetCards(ns, _settings), "GetCards", null, ct));
+            try
+            {
+                var cards = ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+                    ns => ConnectorProtocol.GetCards(ns, _settings, wide), "GetCards", null, ct));
+                ConnectorCapabilities.SetMandantWide(_settings.Host, wide);
+                return cards;
+            }
+            catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
+            {
+                // "mandant-wide=true" ist nach gemSpec_Kon zulaessig, wird aber von mancher
+                // Firmware nicht angenommen. Der naechste Versuch bleibt, und nur der letzte
+                // Ausschlag praegt das Geaechtnis.
+                _log?.Invoke($"Karten: mandant-wide={wide.ToString().ToLowerInvariant()} abgelehnt" +
+                             (wide ? " – zweiter Versuch ohne Mandanten-Radius" : ""));
+            }
         }
-        catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
-        {
-            // "mandant-wide=true" ist nach gemSpec_Kon zulässig, wird aber von mannger Firmware
-            // nicht angenommen. Zweiter Versuch nur für das eingestellte Mandantenpaar.
-            _log?.Invoke("Karten: zweiter Versuch ohne Mandanten-Radius (mandant-wide=false)");
-            return ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
-                ns => ConnectorProtocol.GetCards(ns, _settings, mandantWide: false), "GetCards", null, ct));
-        }
+
+        // Beide Varianten abgelehnt: das Geaechtnis unentschieden lassen, damit spaeter
+        // erneut probiert wird, statt auf einer widerlegten Annahme stehen zu bleiben.
+        ConnectorCapabilities.Forget(_settings.Host);
+        return ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+            ns => ConnectorProtocol.GetCards(ns, _settings, false), "GetCards", null, ct));
     }
 
-    public async Task<List<ConnectorCardTerminal>> GetCardTerminalsAsync(CancellationToken ct)
+    /// <summary>Dieselbe Rueckfallebene wie bei den Karten. Der Radius gilt fuer den Mandanten,
+    /// nicht fuer die Operation, deshalb teilen sich beide dasselbe Geaechtnis.</summary>
+    private async Task<List<ConnectorCardTerminal>> GetCardTerminalsAsync(CancellationToken ct)
     {
-        try
+        foreach (var wide in ConnectorCapabilities.MandantWideAttempts(ConnectorCapabilities.GetMandantWide(_settings.Host)))
         {
-            return ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
-                ns => ConnectorProtocol.GetCardTerminals(ns, _settings), "GetCardTerminals", null, ct));
+            try
+            {
+                var terminals = ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+                    ns => ConnectorProtocol.GetCardTerminals(ns, _settings, wide), "GetCardTerminals", null, ct));
+                ConnectorCapabilities.SetMandantWide(_settings.Host, wide);
+                return terminals;
+            }
+            catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
+            {
+                _log?.Invoke($"Kartenterminals: mandant-wide={wide.ToString().ToLowerInvariant()} abgelehnt");
+            }
         }
-        catch (ConnectorFaultException ex) when (ConnectorProtocol.IsSyntaxError(ex))
-        {
-            _log?.Invoke("Kartenterminals: zweiter Versuch ohne Mandanten-Radius (mandant-wide=false)");
-            return ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
-                ns => ConnectorProtocol.GetCardTerminals(ns, _settings, mandantWide: false), "GetCardTerminals", null, ct));
-        }
+
+        ConnectorCapabilities.Forget(_settings.Host);
+        return ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+            ns => ConnectorProtocol.GetCardTerminals(ns, _settings, false), "GetCardTerminals", null, ct));
     }
 
     public async Task<ConnectorResourceInfo> GetResourceInformationAsync(CancellationToken ct) =>

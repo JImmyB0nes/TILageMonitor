@@ -23,11 +23,28 @@ public sealed class ConnectorMonitor : IDisposable
     private bool _unreachableNotified;
     private bool _subscribed;
     private bool _subscriptionAttempted;
+
+    /// <summary>
+    /// Ob der Konnektor die eigenen Abos zuletzt noch gefuehrt hat. Wird aus dem Datenstand
+    /// gezogen, nicht aus dem Erfolg eines frueheren Subscribe-Aufrufs – nur so faellt ein
+    /// abgelaufenes Abo ueberhaupt auf.
+    /// </summary>
+    private bool _subscriptionsAlive;
     private DateTime _lastEventPoll = DateTime.MinValue;
 
     /// <summary>Mindestabstand zwischen zwei ereignisgesteuerten Abfragen, damit ein
     /// fehlerhaftes Topic mit Dauuerereignissen nicht zum Entenrennen fuehrt.</summary>
     private static readonly TimeSpan EventPollCooldown = TimeSpan.FromSeconds(10);
+
+    /// <summary>Wie oft die Signaturzertifikate nachgelesen werden – selten, weil ihr Ablauf
+    /// kein Vorgang ist, der im Fuenfminutentakt passiert.</summary>
+    private static readonly TimeSpan QesReadInterval = TimeSpan.FromHours(12);
+    private DateTime _lastQesRead = DateTime.MinValue;
+
+    /// <summary>Das Signaturzertifikat je Karte, damit der Alarm zwischen zwei Nachlesen
+    /// nicht verschwindet. Nachgezogen wird ueber die Kartengriffangabe, die der Konnektor
+    /// ueber die Laufzeit gleich haelt.</summary>
+    private readonly Dictionary<string, ConnectorCertificateInfo> _qesByCard = new(StringComparer.OrdinalIgnoreCase);
 
     public ConnectorSnapshot? LastSnapshot { get; private set; }
     public IReadOnlyList<ConnectorAlert> LastAlerts { get; private set; } = [];
@@ -86,6 +103,7 @@ public sealed class ConnectorMonitor : IDisposable
         _consecutiveFailures = 0;
         _unreachableNotified = false;
         _subscribed = false;
+        _subscriptionsAlive = false;
         _subscriptionAttempted = false;
         _events.EventReceived -= OnEvent;
         _events.Dispose();
@@ -129,9 +147,12 @@ public sealed class ConnectorMonitor : IDisposable
             await PollOnceAsync(settings, ct);
             try
             {
-                // Mit erfolgreichem Abo darf seltener gepollt werden, weil Ereignisse ohnehin
-                // sofort nachziehen. Ohne Abo bleibt es beim eingestellten Intervall.
-                var minutes = _subscribed ? Math.Clamp(settings.PollMinutes * 2, 10, 120) : Math.Clamp(settings.PollMinutes, 1, 120);
+                // Seltener gepollt wird nur, wenn die Abos nachweislich noch stehen. Ein
+                // abgelaufenes Abo liefert nichts mehr, und wer dann nach dem eigenen Erfolg
+                // geht, pollt halb so oft wie ohne Abo – schlechter als ohne, bei gleicher
+                // Erklaerung. Dasselbe Urteil wie in der Anzeige, damit nicht die eine Stelle
+                // "aktiv" behauptet und die andere daneben pollt.
+                var minutes = _subscriptionsAlive ? Math.Clamp(settings.PollMinutes * 2, 10, 120) : Math.Clamp(settings.PollMinutes, 1, 120);
                 await Task.Delay(TimeSpan.FromMinutes(minutes), ct);
             }
             catch (OperationCanceledException)
@@ -152,6 +173,7 @@ public sealed class ConnectorMonitor : IDisposable
             using var client = new ConnectorClient(settings);
             var snapshot = await client.GetSnapshotAsync(includeCertificates: false, ct);
             ct.ThrowIfCancellationRequested(); // Neustart während des Abrufs: Ergebnis verwerfen
+            await ReadQesAsync(client, snapshot, ct);
             LastSnapshot = snapshot;
             LastError = null;
 
@@ -178,7 +200,7 @@ public sealed class ConnectorMonitor : IDisposable
                 _activeAlertKeys.Add(alert.Key);
 
             if (settings.EventSubscriptionsEnabled)
-                await EnsureSubscriptionsAsync(client, ct);
+                await EnsureSubscriptionsAsync(client, snapshot, ct);
 
             if (settings.HistoryEnabled)
                 ConnectorHistoryStore.UpsertNow(snapshot, DateTime.Now);
@@ -213,30 +235,50 @@ public sealed class ConnectorMonitor : IDisposable
     }
 
     /// <summary>
-    /// Legt einmalig Abos auf die wesentlichen Ereignisse an. Schlaegt etwas fehl, bleibt die
-    /// App beim Pollen – die Benutzereinstellung darf keine Stoerung ausloesen.
+    /// Stellt sicher, dass die eigenen Abos noch stehen. Schlaegt etwas fehl, bleibt die App
+    /// beim Pollen – die Benutzereinstellung darf keine Stoerung ausloesen.
     /// </summary>
-    private async Task EnsureSubscriptionsAsync(ConnectorClient client, CancellationToken ct)
+    /// <remarks>
+    /// Die Frage steht nicht mehr "haben wir es mal geschafft", sondern "steht es noch da".
+    /// Dafuer reicht der Datenstand, der ohnehin schon hereingelesen wird: GetSubscription
+    /// liefert die aktiven Abos samt Ablaufzeit. Ein Abo, das abgelaufen ist, war die meiste
+    /// Zeit unsichtbar – die Anzeige haelt "Abos aktiv", der Konnektor sendet nichts mehr, und
+    /// weil _subscribed auf true steht, wird auch noch seltener gepollt als ohne Abo. Der
+    /// Fehler waehre lautlos, fuer unbegrenzte Zeit, und nur am ersten Tag faellig.
+    /// </remarks>
+    private async Task EnsureSubscriptionsAsync(ConnectorClient client, ConnectorSnapshot snapshot, CancellationToken ct)
     {
-        if (_subscribed)
+        // Leere Liste ist zweierlei: die Abos sind weg, oder GetSubscription hat nicht
+        // geantwortet. Ersteres erneuert man, zweiteres haelt man – sonst wurde ein Konnektor
+        // ohne diesen Dienst bei jedem Poll einen neuen Anlauf kosten.
+        var asked = !snapshot.Warnings.Any(w => w.Contains("GetSubscription", StringComparison.Ordinal));
+        var ours = Ours(snapshot);
+        if (asked)
+            _subscriptionsAlive = ours.Any(s => s.Alive(DateTime.Now));
+        if (_subscribed && _subscriptionsAlive)
             return;
 
-        // Ein Anlauf pro Neustart: ohne diesen Schutz wurde jeder Poll erneut einen Port
-        // besetzen und funf Subscribe-Aufrufe senden, wenn die Firmware keine Abos annimmt.
-        if (_subscriptionAttempted)
+        // Ein Anlauf pro Neustart, solange der Konnektor nichts zurueckliefert: ohne diesen
+        // Schutz wurde jeder Poll erneut einen Port besetzen und funf Subscribe-Aufrufe
+        // senden, wenn die Firmware gar keine Abos annimmt. Anders steht es, wenn die Liste
+        // zwar geliefert, aber leer ist – dann ist das Abo abgelaufen, und genau dafuer ist
+        // die Erneuerung da. Sie wurde sonst nie gewagt.
+        if (_subscriptionAttempted && (!asked || ours.Count == 0))
             return;
         _subscriptionAttempted = true;
 
         if (!_events.IsListening && !_events.EnsureListening(msg => LastEventNote = msg))
             return;
 
+        var topics = EventTopics().ToList();
+
         var succeeded = 0;
-        foreach (var topic in EventTopics())
+        foreach (var name in topics)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
-                var (id, _) = await client.SubscribeAsync(_events.EventTo ?? "", topic, ct);
+                var (id, _) = await client.SubscribeAsync(_events.EventTo ?? "", name, ct);
                 if (!string.IsNullOrWhiteSpace(id))
                     succeeded++;
             }
@@ -249,6 +291,10 @@ public sealed class ConnectorMonitor : IDisposable
         _subscribed = succeeded > 0;
         if (_subscribed)
         {
+            // Der eigene Erfolg gilt erst bis zum naechsten Datenstand als bestaetigt. Ohne
+            // die Vorleistung wuerde gleich nach dem ersten Anlauf "fuehrt sie nicht mehr"
+            // dastehen, weil der Datenstand, aus dem Ours() schaepft, aelter ist als das Abo.
+            _subscriptionsAlive = true;
             _events.EventReceived += OnEvent;
         }
         else
@@ -262,6 +308,69 @@ public sealed class ConnectorMonitor : IDisposable
     }
 
     /// <summary>
+    /// Liest C.QES nach, damit der Hintergrund ueberhaupt bemerkt, dass qualifizierte
+    /// Signaturen ins Leere laufen. Bewusst nicht jeder Poll: die Abfrage ist teuer, und ein
+    /// Ablauf ist kein Vorgang, der alle fuenf Minuten passiert. Ein Versuch am Tag reicht, und
+    /// er betrifft nur Karten, die ueberhaupt signieren koennen – eine eGK fuehrt kein C.QES.
+    /// </summary>
+    /// <remarks>
+    /// Ohne diesen Schritt ist der QES-Alarm der einzige, den der Hintergrund nie liefert: Er
+    /// braucht ein Zertifikat, der Hintergrund laesst es aber nicht lesen. Die Karte wirkt dann
+    /// einwandfrei, die PIN passt, und trotzdem scheitert jede Signatur – bis jemand manuell
+    /// „Alle Zertifikate lesen" drueckt.
+    /// </remarks>
+    private async Task ReadQesAsync(ConnectorClient client, ConnectorSnapshot snapshot, CancellationToken ct)
+    {
+        if (DateTime.Now - _lastQesRead < QesReadInterval)
+        {
+            // Nachlesen ist selten, Bewerten ist staendig. Ohne die Uebernahme wuerde der
+            // Alarm nur auf dem einen Poll erscheinen, auf dem gelesen wurde, und am
+            // naechsten wieder weg sein – als Alarm taugt er so nicht, weil er bloe
+            // anzeigt, dass eben gerade gelesen wurde.
+            foreach (var card in snapshot.Cards)
+                if (_qesByCard.TryGetValue(card.CardHandle, out var known))
+                    card.Certificates.Add(known);
+            return;
+        }
+
+        _lastQesRead = DateTime.Now;
+        _qesByCard.Clear();
+
+        foreach (var card in snapshot.Cards.Where(c => c.SupportsPinManagement))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var qes = await client.ReadCardCertificateAsync(card.CardHandle, "C.QES", ct);
+                if (qes is not null)
+                {
+                    card.Certificates.Add(qes);
+                    _qesByCard[card.CardHandle] = qes;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Karte fuehrt kein C.QES – das ist der Regelfall, keine Meldung.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Die Abos, die auf diese App zeigen. Getrennt wird nach Adresse, nicht nach Topic: der
+    /// Konnektor faehrt dieselbe Adresse mehrfach vor, wenn ein frueherer Anlauf fehl
+    /// geschlagen hat, und wer dann nach dem Topic sucht, haelt die Menge fuer leer.
+    /// </summary>
+    private List<ConnectorSubscription> Ours(ConnectorSnapshot snapshot)
+    {
+        var target = _events.EventTo;
+        if (string.IsNullOrWhiteSpace(target))
+            return [];
+        return snapshot.Subscriptions
+            .Where(s => s.EventTo.Contains(target, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    /// <summary>
     /// Laeuft die Abos zurueck, nachdem das Fenster sie gekuendigt hat. Ohne diesen Schritt
     /// behielt der Lauscher "Abos aktiv" und stünde unter der leeren Liste genau das Gegenteil
     /// davon. Der Anlauf bleibt fuers Protokoll auf true gestellt, sonst wuerde der naechste
@@ -271,6 +380,7 @@ public sealed class ConnectorMonitor : IDisposable
     public void ForgetSubscriptions()
     {
         _subscribed = false;
+        _subscriptionsAlive = false;
         _subscriptionAttempted = true;
         _events.EventReceived -= OnEvent;
         _events.Dispose();
@@ -280,17 +390,18 @@ public sealed class ConnectorMonitor : IDisposable
     }
 
     /// <summary>
-    /// Typische Topics. Die Schreibweise variiert je Hersteller, deshalb mehrere Varianten –
-    /// unbekannte laufen einfach ins Leere.
+    /// Typische Topics. Der Namespace kommt aus dem Geaechtnis, nicht aus einer Geschriebenen –
+    /// der Konnektor hat damit schon geantwortet, und ein Abo auf eine ihm fremde Version ist
+    /// genau der Fall, der als Erfolg durchgeht, ohne dass je ein Ereignis ankommt.
     /// </summary>
-    private static IEnumerable<string> EventTopics() =>
-    [
-        "http://ws.gematik.de/conn/EventService/v7.2#CardInserted",
-        "http://ws.gematik.de/conn/EventService/v7.2#CardRemoved",
-        "http://ws.gematik.de/conn/EventService/v7.2#CardTerminalConnected",
-        "http://ws.gematik.de/conn/EventService/v7.2#CardTerminalDisconnected",
-        "http://ws.gematik.de/conn/EventService/v7.2#StatusChanged"
-    ];
+    private List<string> EventTopics()
+    {
+        var ns = ConnectorCapabilities.GetEventNamespace(_settingsProvider().Connector.Host)
+                 ?? ConnectorProtocol.DefaultEventServiceNs;
+        return ["CardInserted", "CardRemoved", "CardTerminalConnected", "CardTerminalDisconnected", "StatusChanged"]
+            .Select(name => ConnectorProtocol.EventTopic(ns, name))
+            .ToList();
+    }
 
     private void OnEvent(ConnectorEvent evt)
     {
@@ -321,8 +432,16 @@ public sealed class ConnectorMonitor : IDisposable
     /// </summary>
     public string DescribeEventStream()
     {
-        if (_subscribed)
+        // Nicht danach gefragt, ob mal ein Subscribe durchkam, sondern danach, ob der
+        // Konnektor sie zuletzt noch gefuehrt hat. Ein abgelaufenes Abo ist genau der Fall,
+        // in dem "aktiv" dasteht und doch nichts kommt – und der Nutzer haelte die Erklaerung
+        // fuer die Erklaerung, die sie nicht mehr ist.
+        if (_subscribed && _subscriptionsAlive)
             return L($"Ereignis-Abos aktiv, lauscht auf {_events.EventTo}", $"event subscriptions active, listening on {_events.EventTo}");
+
+        if (_subscribed)
+            return L($"Abos angelegt, aber der Konnektor fuehrt sie nicht mehr – Ablauf erreicht oder kuendigt. Die App pollt wieder regelmaessig.\n({LastEventNote ?? ""})",
+                     $"Subscriptions were created, but the connector no longer lists them – expired or cancelled. The app polls again on schedule.\n({LastEventNote ?? ""})");
 
         // Noch kein oder kein einziges Abo geschafft – Begruendung aus dem Listener nennen,
         // damit der Nutzer nicht raeunen muss, warum Karte rein/raus nur verspaetet ankommt.

@@ -48,11 +48,14 @@ public static class ConnectorProtocol
     ];
 
     /// <summary>
-    /// Topics, fuer die ein Abo angelegt wird. Die Schreibweise folgt der Konvention
-    /// "Dienst-Namespace#Ereignis" aus gemSpec_Kon; nicht jede Firmware kennt alle.
-    /// Nicht unterstuetzte Topics fuehren zu einem Teilfehler, nicht zum Abbruch.
+    /// Topic zu einem Ereignis, Konvention "Dienst-Namespace#Ereignis" aus gemSpec_Kon. Der
+    /// Namespace wird uebergeben, nicht hartcodiert – der Aufrufer soll denjenigen nennen, mit
+    /// dem der Konnektor tatsaechlich geantwortet hat. Ein festgeschriebener Namespace laeuft
+    /// bei einer Firmware mit anderer EventService-Version ins Leere, und das Leere ist hier
+    /// das boesartige: das Abo gilt als geschlossen, es kommt nur nie ein Ereignis an.
     /// </summary>
-    public static string EventTopic(string serviceNs, string name) => $"{serviceNs}#{name}";
+    public static string EventTopic(string serviceNs, string name) =>
+        $"{serviceNs.Trim().TrimEnd('#')}#{name.Trim()}";
 
     /// <summary>OID der Admission-Extension (ISIS-MTT/Common PKI), enthält die Telematik-ID.</summary>
     public const string AdmissionOid = "1.3.36.8.3.3";
@@ -418,13 +421,38 @@ public static class ConnectorProtocol
             })
             .ToList();
 
+    /// <summary>
+    /// COS-Stand einer Karte. Was fehlt, ist nicht leer, sondern unbekannt – eine Karte, die
+    /// nur die Hauptversion nennt, fuehrt sonst "4.." vor, und das liest sich wie ein
+    /// Beschädigungsfall, obwohl der Konnektor nur duenner liefert als erwartet.
+    /// </summary>
+    /// <remarks>
+    /// Gelesen wird aus beiden moeglichen Verästen: COSVersion ist die Form, die im
+    /// Implementierungsleitfaden steht, Version diejenige, die vereinzelt Firmwaren statt der
+    /// COS-Auskunft fuellen. Beide koennen sich ueberlagern, deshalb wird der erste Eintrag
+    /// mit Inhalt gefuehrt, nicht die Reihenfolge der Kindelemente.
+    /// </remarks>
     private static string CardVersionText(XElement card)
     {
         var version = card.Elements().FirstOrDefault(e => e.Name.LocalName == "CardVersion");
-        var cos = version?.Elements().FirstOrDefault(e => e.Name.LocalName == "COSVersion");
-        if (cos is null)
+        if (version is null)
             return "";
-        return $"{Value(cos, "Major")}.{Value(cos, "Minor")}.{Value(cos, "Revision")}".Trim('.');
+
+        foreach (var branch in new[] { "COSVersion", "Version", "OSVersion" })
+        {
+            var node = version.Elements().FirstOrDefault(e => e.Name.LocalName == branch);
+            if (node is null)
+                continue;
+
+            var parts = new[] { "Major", "Minor", "Revision" }
+                .Select(p => Value(node, p))
+                .Where(p => !string.IsNullOrWhiteSpace(p));
+            var text = string.Join(".", parts);
+            if (text.Length > 0)
+                return text;
+        }
+
+        return "";
     }
 
     public static List<ConnectorCardTerminal> ParseCardTerminals(XElement response) =>

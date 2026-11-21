@@ -86,6 +86,13 @@ public sealed class ConnectorSubscription
     public string EventTo { get; set; } = "";
     public string Filter { get; set; } = "";
     public DateTime? TerminationTime { get; set; }
+
+    /// <summary>
+    /// Steht das Abo zu <paramref name="now"/> noch? Ein Abo ohne Ablaufzeit gilt als offen –
+    /// die Firmware nennt sie nicht ueberall, und sie jedes Mal als abgelaufen zu melden, wenn
+    /// der Konnektor geizt, waer die schlechtere Annahme.
+    /// </summary>
+    public bool Alive(DateTime now) => TerminationTime is null || TerminationTime > now;
 }
 
 /// <summary>
