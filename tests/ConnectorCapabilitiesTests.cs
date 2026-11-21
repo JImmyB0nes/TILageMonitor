@@ -145,8 +145,8 @@ public sealed class ConnectorCapabilitiesTests
 }
 
 /// <summary>
-/// Ob ein Abo noch steht. Getrennt wird die Frage vom Erfolg des Subscribe-Aufrufs –
-/// der ist nach einer Woche das Einzige, was die App noch zu wissen glaubt.
+/// Ob ein Abo noch steht, und wem es gehoert. Beides wird getrennt vom Erfolg des
+/// Subscribe-Aufrufs – der ist nach einer Woche das Einzige, was die App noch zu wissen glaubt.
 /// </summary>
 public sealed class ConnectorSubscriptionTests
 {
@@ -170,5 +170,48 @@ public sealed class ConnectorSubscriptionTests
     public void A_subscription_without_end_time_counts_as_open()
     {
         Assert.True(new ConnectorSubscription().Alive(Now));
+    }
+
+    /// <summary>
+    /// Der Lauscher weicht auf den naechsten Hafen aus, wenn ein frueherer Anlauf den
+    /// besetzten zurucklaesst. Vergliche man die volle Adresse, hielte die App ihr eigenes Abo
+    /// auf dem alten Hafen fuer verschwunden – der Fehler waere, dass sie sich selbst
+    /// abmeldet, und die Erklaerung dafuer waeme bei jedem Poll neu.
+    /// </summary>
+    [Fact]
+    public void A_runner_on_another_port_still_belongs_to_this_app()
+    {
+        var sub = new ConnectorSubscription { EventTo = "cetp://192.168.1.20:48151" };
+
+        Assert.True(sub.FromHost(ConnectorSubscription.HostOf("cetp://192.168.1.20:48150")));
+    }
+
+    [Fact]
+    public void A_foreign_machine_is_not_this_app()
+    {
+        var sub = new ConnectorSubscription { EventTo = "cetp://192.168.1.99:48150" };
+
+        Assert.False(sub.FromHost(ConnectorSubscription.HostOf("cetp://192.168.1.20:48150")));
+    }
+
+    /// <summary>Eine leere Adresse ist kein Vergleich: eine leere Zeichenkette traefe
+    /// jede Adresse, und der Knopf wurde auf einmal die Abos der Nachbarn loeschen.</summary>
+    [Fact]
+    public void A_blind_listener_owns_nothing()
+    {
+        Assert.Null(ConnectorSubscription.HostOf(null));
+        Assert.Null(ConnectorSubscription.HostOf("cetp://"));
+        Assert.False(new ConnectorSubscription { EventTo = "cetp://192.168.1.20:48150" }.FromHost(ConnectorSubscription.HostOf(null)));
+    }
+
+    /// <summary>Eine umschlossene IPv6 fuehrt ihr eigenes Zeichen vor den andern. Am ersten
+    /// Doppelpunkt geschnitten, bliebe eine Klammer uebrig, die in jeder Adresse vorkommt –
+    /// die Ordnung traefe also alles, auch die Nachbarn.</summary>
+    [Fact]
+    public void A_bracketed_host_keeps_its_own_shape()
+    {
+        Assert.Equal("[2001:db8::20]", ConnectorSubscription.HostOf("cetp://[2001:db8::20]:48150"));
+        Assert.True(new ConnectorSubscription { EventTo = "cetp://[2001:db8::20]:48151" }.FromHost(ConnectorSubscription.HostOf("cetp://[2001:db8::20]:48150")));
+        Assert.False(new ConnectorSubscription { EventTo = "cetp://[2001:db8::99]:48150" }.FromHost(ConnectorSubscription.HostOf("cetp://[2001:db8::20]:48150")));
     }
 }

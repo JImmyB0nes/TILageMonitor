@@ -66,6 +66,17 @@ public sealed class ConnectorMonitor : IDisposable
     /// <summary>Lauscht der Listener bereits – und damit: moeglich, ohne dass ein Abo geklappt hat.</summary>
     public bool EventStreamActive => _events.IsListening;
 
+    /// <summary>
+    /// Ob der Konnektor die Abos dieser App beim letzten Datenstand noch gefuehrt hat. Nicht
+    /// danach gefragt, ob mal ein Subscribe durchkam – das ist nach einer Woche das Einzige,
+    /// was die App noch zu wissen glaubt, und ein abgelaufenes Abo steht genau daneben.
+    /// </summary>
+    public bool SubscriptionsAlive => _subscriptionsAlive;
+
+    /// <summary>Adresse, auf die die eigenen Abos zeigen. Leer, solange kein Lauscher steht –
+    /// damit das Fenster sie nicht mit einer Adresse aus einer frueheren Sitzung vergleicht.</summary>
+    public string? EventTarget => _events.EventTo;
+
     /// <summary>Wird nach jedem Abruf auf dem Thread-Pool ausgelöst.</summary>
     public event Action? Updated;
 
@@ -362,12 +373,13 @@ public sealed class ConnectorMonitor : IDisposable
     /// </summary>
     private List<ConnectorSubscription> Ours(ConnectorSnapshot snapshot)
     {
-        var target = _events.EventTo;
-        if (string.IsNullOrWhiteSpace(target))
+        // Der Hafen ist der wechselnde Teil, die Maschine ist es nicht. Dieselbe App, die
+        // nach einem besetzten Port auf den naechsten ausweicht, haelt ihr Abo andernfalls
+        // fuer verschwunden, obwohl es auf dem alten Hafen weiter laeuft.
+        var host = ConnectorSubscription.HostOf(_events.EventTo);
+        if (host is null)
             return [];
-        return snapshot.Subscriptions
-            .Where(s => s.EventTo.Contains(target, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        return snapshot.Subscriptions.Where(s => s.FromHost(host)).ToList();
     }
 
     /// <summary>

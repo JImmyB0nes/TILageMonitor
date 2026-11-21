@@ -694,40 +694,75 @@ public partial class ConnectorWindow : Window
     private void RenderSubscriptions(ConnectorSnapshot snapshot)
     {
         SubscriptionsList.Items.Clear();
+        var mine = OwnTarget();
+        var ours = 0;
+
         foreach (var sub in snapshot.Subscriptions)
         {
+            // Wer auf einer Konfigurationsseite nur die Topic-Zeile vorfuehrt, erzaehlt dem
+            // Nutzer, dass etwas gut aussieht. Ein Konnektor fuehrt aber auch die Abos der
+            // Nachbarn und frueherer Sitzungen: die Liste ist wahr, wenn sie gefuellt ist,
+            // und sagt doch nichts ueber diese App.
+            var isOurs = IsOurs(sub, mine);
+            if (isOurs)
+                ours++;
+
             var panel = new StackPanel { Margin = new Thickness(0, 3, 0, 3) };
             panel.Children.Add(new TextBlock
             {
-                Text = sub.Topic,
+                Text = isOurs ? sub.Topic + "  ← " + L("diese App", "this app") : sub.Topic,
                 FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
+                FontWeight = isOurs ? FontWeights.Bold : FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap
             });
             var tail = new List<string> { sub.EventTo };
             if (sub.TerminationTime is { } until)
-                tail.Add(L("gültig bis", "valid until") + " " + until.ToString("dd.MM.yyyy HH:mm", LocalizationService.DisplayCulture));
-            panel.Children.Add(new TextBlock
+            {
+                // Die Ablaufzeit entscheidet, ob ein Abo ueberhaupt noch liefert. Sie so
+                // selbstverstaendlich mitlaufen zu lassen, war der Grund, warum abgelaufene
+                // Abos wochenlang als aktiv galten – die Zahl stand da, niemand las sie.
+                var expired = until <= DateTime.Now;
+                tail.Add((expired ? L("abgelaufen am", "expired on") : L("gültig bis", "valid until")) + " " + until.ToString("dd.MM.yyyy HH:mm", LocalizationService.DisplayCulture));
+            }
+            var line = new TextBlock
             {
                 Text = string.Join(" · ", tail.Where(t => !string.IsNullOrWhiteSpace(t))),
                 FontSize = 11,
-                Foreground = Brush("TextMuted"),
+                Foreground = sub.Alive(DateTime.Now) ? Brush("TextMuted") : Brush("StatusOutage"),
                 TextWrapping = TextWrapping.Wrap
-            });
+            };
+            panel.Children.Add(line);
             SubscriptionsList.Items.Add(panel);
         }
 
         if (snapshot.Subscriptions.Count > 0)
         {
-            SubscriptionsEmpty.Visibility = Visibility.Collapsed;
+            // Der Hinweis entscheidet, ob die Liste beruhigt oder beunruhigt. Ohne ihn steht
+            // unter einer gefuellten Liste, dass alles gut sei, waehrend die eigenen Abos
+            // langst weg sind und die Nachbarn die Liste vollhalten.
+            SubscriptionsStatus.Text = ours > 0
+                ? string.Format(
+                    L("{0} von {1} Abos gehören zu dieser App und stehen noch.", "{0} of {1} subscriptions belong to this app and are still standing."),
+                    ours, snapshot.Subscriptions.Count)
+                : L("Kein Eintrag gehört zu dieser App – die App pollt im eingestellten Intervall.",
+                    "No entry belongs to this app – the app polls at the configured interval.");
+            SubscriptionsStatus.Visibility = Visibility.Visible;
             return;
         }
 
         // Leer ist keine Fehlmeldung, sondern die Erklaerung. Die Begruendung des Lauschers
         // gehoert daneben, sonst steht "keine Abos" da wie ein Fehler.
-        SubscriptionsEmpty.Text = _ownerMain.ConnectorMonitor.DescribeEventStream();
-        SubscriptionsEmpty.Visibility = Visibility.Visible;
+        SubscriptionsStatus.Text = _ownerMain.ConnectorMonitor.DescribeEventStream();
+        SubscriptionsStatus.Visibility = Visibility.Visible;
     }
+
+    /// <summary>Rechneranteil der eigenen Adresse, Hafen abgeschnitten. Null, wenn kein
+    /// Lauscher steht – damit nicht mit einer leeren Zeichenkette jede Adresse getroffen wird.</summary>
+    private static string? OwnTarget() => ConnectorSubscription.HostOf(_ownerMain.ConnectorMonitor.EventTarget);
+
+    /// <summary>Dieselbe Ordnung wie im Hintergrundpoller, damit die Anzeige und die
+    /// Erneuerung nicht an einem Eintrag auseinandergeraten.</summary>
+    private static bool IsOurs(ConnectorSubscription sub, string? host) => sub.FromHost(host);
 
     /// <summary>
     /// Kuendigt alle Abos, die auf diesem Rechner zeigen. Ein Laeufer, der nach
@@ -742,9 +777,33 @@ public partial class ConnectorWindow : Window
             return;
         }
 
+        // Ohne stehenden Lauscher kennt die App ihre Adresse nicht. Sie dann alle zu
+        // kuendigen, waer der einzige Fall, in dem der Knopf etwas anderes tut, als er
+        // verspricht: auf einem Konnektor mit andern Anwendern loescht er deren Abos.
+        var mine = OwnTarget();
+        if (string.IsNullOrWhiteSpace(mine))
+        {
+            ShowWarning(L("Die App horcht derzeit auf keinem Port. Ohne eigene Adresse lässt sich nicht sagen, welche Einträge zu ihr gehören – gekündigt wird deshalb nichts.",
+                          "The app is not listening on any port. Without its own address it cannot be told which entries belong to it, so nothing is cancelled."));
+            return;
+        }
+
+        var ours = _snapshot.Subscriptions.Where(s => IsOurs(s, mine)).ToList();
+        if (ours.Count == 0)
+        {
+            ShowWarning(L("Kein Eintrag zeigt auf diese App. Die eingetragenen Abos gehören anderen Anwendern oder einer früheren Adresse.",
+                          "No entry points at this app. The listed subscriptions belong to other users or to an earlier address."));
+            return;
+        }
+
         if (System.Windows.MessageBox.Show(this,
-                L("Alle Ereignis-Abos kündigen, die an diese App gehen?\n\nDanach fällt die Anzeige auf reines Pollen zurück, bis erneut abonniert wird.",
-                  "Unsubscribe all event subscriptions pointing at this app?\n\nThe display falls back to plain polling until something is subscribed again."),
+                string.Format(
+                    L("{0} von {1} eingetragenen Abos kündigen, die an diese App gehen?\n\nDanach fällt die Anzeige auf reines Pollen zurück, bis erneut abonniert wird.",
+                      "Unsubscribe {0} of {1} registered subscriptions pointing at this app?\n\nThe display falls back to plain polling until something is subscribed again."),
+                    ours.Count, _snapshot.Subscriptions.Count) +
+                (_snapshot.Subscriptions.Count > ours.Count
+                    ? "\n\n" + L("Andere Eintraege bleiben bestehen.", "Other entries stay untouched.")
+                    : ""),
                 L("Abos kündigen", "Unsubscribe"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
 
@@ -754,7 +813,7 @@ public partial class ConnectorWindow : Window
             using var client = CreateClient();
             var failed = 0;
             var cancelled = 0;
-            foreach (var sub in _snapshot.Subscriptions)
+            foreach (var sub in ours)
             {
                 if (string.IsNullOrWhiteSpace(sub.SubscriptionId))
                     continue;
@@ -778,8 +837,8 @@ public partial class ConnectorWindow : Window
                 _ownerMain.ConnectorMonitor.ForgetSubscriptions();
 
             if (failed > 0)
-                ShowWarning(L($"{failed} von {_snapshot.Subscriptions.Count} Abos konnten nicht gekündigt werden. Der Konnektor behält sie unter Umständen bis zur Ablaufzeit.",
-                              $"{failed} of {_snapshot.Subscriptions.Count} subscriptions could not be cancelled. The connector may keep them until their termination time."));
+                ShowWarning(L($"{failed} von {ours.Count} Abos konnten nicht gekündigt werden. Der Konnektor behält sie unter Umständen bis zur Ablaufzeit.",
+                              $"{failed} of {ours.Count} subscriptions could not be cancelled. The connector may keep them until their termination time."));
         }
         catch (Exception ex)
         {
@@ -1914,9 +1973,20 @@ public partial class ConnectorWindow : Window
         }
         if (s.Subscriptions.Count > 0)
         {
-            sb.AppendLine("Ereignis-Abos:");
+            // Dieselbe Unterscheidung wie im Fenster: der Bericht laeuft oft auf einem
+            // Konnektor mit andern Anwendern, und eine Liste ohne Herr ist dort die
+            // Erklaerung, die am haeufigsten in die Irre fuehrt. Der Lauscher ist hier
+            // moeglicherwaise nicht dabei – ohne ihn faellt die Ordnung auf die reine
+            // Aufzuehlung zurueck, statt sie zu raten.
+            var target = ConnectorSubscription.HostOf(monitor?.EventTarget);
+            if (monitor is not null)
+                sb.AppendLine($"Ereignis-Abos: {s.Subscriptions.Count} eingetragen, {s.Subscriptions.Count(sub => IsOurs(sub, target))} von dieser App"
+                              + (monitor.SubscriptionsAlive ? ", stehen noch" : ", laut Konnektor nicht mehr aktiv") + ".");
+            else
+                sb.AppendLine($"Ereignis-Abos: {s.Subscriptions.Count} eingetragen – wem sie hoeren, steht nicht dabei, der Bericht lief ohne Lauscher.");
             foreach (var sub in s.Subscriptions)
-                sb.AppendLine($"  {sub.SubscriptionId}  {sub.Topic}  ->  {sub.EventTo}");
+                sb.AppendLine($"  {(IsOurs(sub, target) ? "*" : " ")} {sub.SubscriptionId}  {sub.Topic}  ->  {sub.EventTo}"
+                              + (sub.TerminationTime is { } until ? $"  bis {until:dd.MM.yyyy HH:mm}" + (sub.Alive(DateTime.Now) ? "" : " (abgelaufen)") : ""));
         }
         else
         {

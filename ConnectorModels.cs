@@ -93,6 +93,37 @@ public sealed class ConnectorSubscription
     /// der Konnektor geizt, waer die schlechtere Annahme.
     /// </summary>
     public bool Alive(DateTime now) => TerminationTime is null || TerminationTime > now;
+
+    /// <summary>
+    /// Gehoert dieser Eintrag zu einer Adresse auf diesem Rechner? Nach der Maschine getrennt,
+    /// nicht nach der vollen Adresse: der Lauscher wechselt den Hafen, wenn ein frueherer
+    /// Anlauf den naechsten Port besetzt haelt, und wer die Hafennummer mitvergleicht, haelt
+    /// das eigene Abo fuer verschwunden, waehrend es auf dem alten Hafen weiter laeuft. Nach
+    /// dem Topic zu trennen, scheitert an mehreren Eintraegen derselben Adresse erst recht.
+    /// </summary>
+    public bool FromHost(string? host) => !string.IsNullOrWhiteSpace(host) && EventTo.Contains(host, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Rechneranteil einer cetp-Adresse, Hafen abgeschnitten. Null, wenn nichts
+    /// uebrig bleibt, damit ein leerer Lauscher nicht mit jeder Adresse verglichen wird.</summary>
+    public static string? HostOf(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+            return null;
+        var tail = address.Contains("://", StringComparison.Ordinal) ? address[(address.IndexOf("://", StringComparison.Ordinal) + 3)..] : address;
+        // Eine umschlossene IPv6 fuehrt ihr eigenes Zeichen vor den andern: wuerde am ersten
+        // Doppelpunkt geschnitten, bliebe eine Klammer uebrig, die in jeder Adresse
+        // vorkommt – die Ordnung traefe also alles, auch die Nachbarn.
+        if (tail.StartsWith('['))
+        {
+            var close = tail.IndexOf(']');
+            return close > 0 ? tail[..(close + 1)] : null;
+        }
+        var cut = tail.IndexOf(':');
+        if (cut >= 0)
+            tail = tail[..cut];
+        tail = tail.TrimEnd('/');
+        return tail.Length == 0 ? null : tail;
+    }
 }
 
 /// <summary>

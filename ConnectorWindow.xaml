@@ -732,8 +732,12 @@
                                                     ToolTip="Entfernt alle Einträge, die auf diesem Rechner zeigen. Hilft, wenn derselbe Lauscher nach Fehlversuchen mehrfach steht."/>
                                         </Grid>
                                         <ItemsControl x:Name="SubscriptionsList" Margin="0,10,0,0"/>
-                                        <TextBlock x:Name="SubscriptionsEmpty" FontSize="11" TextWrapping="Wrap"
-                                                   Foreground="{DynamicResource TextMuted}" Visibility="Collapsed"/>
+                                        <!-- Steht unter der Liste, nicht an ihrer Stelle: eine
+                                             gefuellte Liste, die niemandem zugeordnet ist, ist
+                                             der Fall, in dem "keine Abos" als Erklaerung zu
+                                             duenn und eine reine Aufzaehlung troestend waere. -->
+                                        <TextBlock x:Name="SubscriptionsStatus" FontSize="11" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"/>
                                     </StackPanel>
                                 </Border>
 
