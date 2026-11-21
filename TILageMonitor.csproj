@@ -28,7 +28,7 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.7.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- Die Protokollschicht ist ohne Konnektor pruefbar. Damit die Tests an die internen
