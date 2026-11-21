@@ -262,6 +262,24 @@ public sealed class ConnectorMonitor : IDisposable
     }
 
     /// <summary>
+    /// Laeuft die Abos zurueck, nachdem das Fenster sie gekuendigt hat. Ohne diesen Schritt
+    /// behielt der Lauscher "Abos aktiv" und stünde unter der leeren Liste genau das Gegenteil
+    /// davon. Der Anlauf bleibt fuers Protokoll auf true gestellt, sonst wuerde der naechste
+    /// Poll dieselben Adressen sofort wieder besetzen – die Kuendigung waere wirkungslos. Wer
+    /// zurueck zum Abo will, schaltet die Einstellung um (Neustart setzt beide Schalter).
+    /// </summary>
+    public void ForgetSubscriptions()
+    {
+        _subscribed = false;
+        _subscriptionAttempted = true;
+        _events.EventReceived -= OnEvent;
+        _events.Dispose();
+        LastEventNote = L("Alle Abos dieser App gekuendigt – die App pollt wieder.",
+            "All subscriptions of this app cancelled – the app polls again.");
+        Updated?.Invoke();
+    }
+
+    /// <summary>
     /// Typische Topics. Die Schreibweise variiert je Hersteller, deshalb mehrere Varianten –
     /// unbekannte laufen einfach ins Leere.
     /// </summary>

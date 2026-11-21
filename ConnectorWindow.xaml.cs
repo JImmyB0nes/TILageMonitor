@@ -753,6 +753,7 @@ public partial class ConnectorWindow : Window
         {
             using var client = CreateClient();
             var failed = 0;
+            var cancelled = 0;
             foreach (var sub in _snapshot.Subscriptions)
             {
                 if (string.IsNullOrWhiteSpace(sub.SubscriptionId))
@@ -760,6 +761,7 @@ public partial class ConnectorWindow : Window
                 try
                 {
                     await client.UnsubscribeAsync(sub.SubscriptionId, CancellationToken.None);
+                    cancelled++;
                     Log(L("Abo gekündigt", "subscription cancelled") + ": " + sub.SubscriptionId + " " + sub.Topic);
                 }
                 catch (Exception ex)
@@ -768,6 +770,12 @@ public partial class ConnectorWindow : Window
                     Log("✖ " + L("Abo", "subscription") + " " + sub.SubscriptionId + ": " + ex.Message);
                 }
             }
+
+            // Der Lauscher meldet sich erst ab, wenn die Liste leer laeuft. Behielte er
+            // "Abos aktiv" bei, stünde unter der leeren Liste genau das Gegenteil davon – und
+            // die Erklaerung, fuer die die Klappe gebaut wurde, waere selbst die Fehlmeldung.
+            if (cancelled > 0)
+                _ownerMain.ConnectorMonitor.ForgetSubscriptions();
 
             if (failed > 0)
                 ShowWarning(L($"{failed} von {_snapshot.Subscriptions.Count} Abos konnten nicht gekündigt werden. Der Konnektor behält sie unter Umständen bis zur Ablaufzeit.",
@@ -854,8 +862,14 @@ public partial class ConnectorWindow : Window
     private ConnectorCardTerminal? _selectedTerminal;
     private bool _fillingLists;
 
+    /// <summary>
+    /// Reihenfolge der Karten: SMC-B zuerst, dann HBA, dann die ubrigen, zum Schluss die eGK.
+    /// Absteigend nach Rang, nicht absteigend nach der Zahl – ein OrderDescending auf dieselben
+    /// Rangzahlen dreht die Folge vollstaendig um und schiebt die SMC-B ans Ende, also genau
+    /// dorthin, wo sie niemand sucht.
+    /// </summary>
     private static IEnumerable<ConnectorCard> CardOrder(IEnumerable<ConnectorCard> cards) =>
-        cards.OrderByDescending(c => c.IsSmcB ? 0 : c.IsHba ? 1 : c.IsEgk ? 3 : 2)
+        cards.OrderBy(c => c.IsSmcB ? 0 : c.IsHba ? 1 : c.IsEgk ? 3 : 2)
              .ThenBy(c => c.CtId, StringComparer.OrdinalIgnoreCase)
              .ThenBy(c => c.SlotId, StringComparer.OrdinalIgnoreCase);
 
