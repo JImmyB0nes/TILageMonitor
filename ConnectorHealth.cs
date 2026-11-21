@@ -109,7 +109,7 @@ public static class ConnectorHealth
 
             // Fruestes Ablaufdatum aller gelesenen Zertifikate, nicht nur von C.AUT: ein
             // abgelaufenes C.QES behindert das Signieren, ohne dass C.AUT irgendetwo auffällt.
-            var expiry = card.EarliestCertificateExpiry(qes);
+            var expiry = card.EarliestCertificateExpiryExcept(qes);
             if (expiry is { } notAfter)
             {
                 var days = (int)Math.Floor((notAfter - now).TotalDays);

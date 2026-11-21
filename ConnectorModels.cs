@@ -180,7 +180,7 @@ public sealed class ConnectorCard
     public List<ConnectorCertificateInfo> Certificates { get; set; } = new();
 
     /// <summary>Fruehestes Ablaufdatum aller gelesenen Zertifikate.</summary>
-    public DateTime? EarliestCertificateExpiry => EarliestCertificateExpiry(null);
+    public DateTime? EarliestCertificateExpiry => EarliestCertificateExpiryExcept(null);
 
     /// <summary>
     /// Fruehestes Ablaufdatum, wobei ein bereits gemeldetes Zertifikat herausfaellt. Ohne
@@ -188,7 +188,7 @@ public sealed class ConnectorCard
     /// Alarm nennt die Referenz, der QES-Alarm erklaert, dass qualifizierte Signaturen
     /// scheitern. Beides auf einmal haelt der Nutzer fuer zwei Gebrechen, waehrend es eines ist.
     /// </summary>
-    public DateTime? EarliestCertificateExpiry(ConnectorCertificateInfo? alreadyReported)
+    public DateTime? EarliestCertificateExpiryExcept(ConnectorCertificateInfo? alreadyReported)
     {
         if (Certificates.Count == 0)
             return AuthCertificate?.NotAfter ?? CertificateExpirationDate;
