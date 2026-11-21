@@ -758,7 +758,7 @@ public partial class ConnectorWindow : Window
 
     /// <summary>Rechneranteil der eigenen Adresse, Hafen abgeschnitten. Null, wenn kein
     /// Lauscher steht – damit nicht mit einer leeren Zeichenkette jede Adresse getroffen wird.</summary>
-    private static string? OwnTarget() => ConnectorSubscription.HostOf(_ownerMain.ConnectorMonitor.EventTarget);
+    private string? OwnTarget() => ConnectorSubscription.HostOf(_ownerMain.ConnectorMonitor.EventTarget);
 
     /// <summary>Dieselbe Ordnung wie im Hintergrundpoller, damit die Anzeige und die
     /// Erneuerung nicht an einem Eintrag auseinandergeraten.</summary>
