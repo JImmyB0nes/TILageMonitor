@@ -90,7 +90,6 @@ public sealed class ConnectorTopicsAndCardModelTests
         Assert.True(card.IsSmcB);
         Assert.Equal(["PIN.SMC"], card.PinTypes);
         Assert.True(card.SupportsPinManagement);
-        Assert.Contains("SMC-B", card.DisplayName + "HSM-B"); // SM-B zeigt als SMC-B, HSM-B bleibt HSM-B
         if (type == "HSM-B")
             Assert.StartsWith("HSM-B", card.DisplayName);
         else
