@@ -372,6 +372,12 @@
                         <TextBlock Text="Ereignisse" VerticalAlignment="Center"/>
                     </StackPanel>
                 </ListBoxItem>
+                <ListBoxItem x:Name="NavHistory" AutomationProperties.Name="Verlauf">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE81C;"/>
+                        <TextBlock Text="Verlauf" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </ListBoxItem>
                 <ListBoxItem x:Name="NavDiagnostics" AutomationProperties.Name="Diagnose">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE90F;"/>
@@ -501,7 +507,7 @@
                     <Border Style="{StaticResource PanelStyle}">
                         <StackPanel>
                             <TextBlock Text="Zertifikate" Style="{StaticResource SectionTitleStyle}"/>
-                            <TextBlock Text="C.AUT, C.ENC, C.SIG und C.QES der gesteckten Karten. Ablaufdaten erscheinen farblich, bevor sie kritisch werden."
+                            <TextBlock Text="C.AUT, C.ENC, C.SIG und C.QES der gesteckten Karten sowie das Clientsystem-Zertifikat. Warnstufen: 90, 30 und 7 Tage vor Ablauf."
                                        Style="{StaticResource SectionHintStyle}"/>
                             <StackPanel x:Name="CertificatesPanel"/>
                             <Border x:Name="CertificatesEmpty" Style="{StaticResource SubtlePanelStyle}" Visibility="Collapsed">
@@ -558,6 +564,37 @@
                                 </Border>
 
 
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ======================== Verlauf ======================== -->
+            <!-- 14 Tage wie im TI-Verlauf: je Zeile ein Tag als Kachel, darunter die Stunden des
+                 gewählten Tages. Die Daten stammen aus connector-history.json (lokal). -->
+            <TabItem x:Name="HistoryTab" Header="Verlauf">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <Border Style="{StaticResource PanelStyle}">
+                            <StackPanel>
+                                <TextBlock Text="Konnektor-Verlauf (14 Tage)" Style="{StaticResource SectionTitleStyle}"/>
+                                <TextBlock Text="Erreichbarkeit, VPN zur TI und zum SIS sowie gesteckte Karten – lokal aufgezeichnet bei jedem Abruf. Kachel anklicken für die Stunden."
+                                           Style="{StaticResource SectionHintStyle}"/>
+                                <TextBlock x:Name="HistorySummary" FontSize="12" Foreground="{DynamicResource TextMuted}"
+                                           TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <Grid x:Name="HistoryGrid"/>
+                                <WrapPanel x:Name="HistoryLegend" Margin="0,12,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource PanelStyle}">
+                            <StackPanel>
+                                <TextBlock x:Name="HistoryDayTitle" Text="Stunden" Style="{StaticResource SectionTitleStyle}"/>
+                                <Grid x:Name="HistoryHoursGrid" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <Border x:Name="HistoryEmpty" Style="{StaticResource SubtlePanelStyle}" Visibility="Collapsed">
+                            <TextBlock Text="Noch kein Verlauf aufgezeichnet. Der Verlauf füllt sich mit jedem Abruf, solange „Verlauf lokal speichern“ in den Einstellungen aktiv ist."
+                                       FontSize="13" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"/>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

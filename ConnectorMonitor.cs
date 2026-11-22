@@ -34,6 +34,21 @@ public sealed class ConnectorMonitor : IDisposable
     private bool _eventHandlerRegistered;
     private DateTime _lastEventPoll = DateTime.MinValue;
 
+    /// <summary>Beginn der laufenden Nichterreichbarkeit (null, solange alles laeuft).</summary>
+    private DateTime? _outageSince;
+
+    /// <summary>
+    /// Nach einer Nichterreichbarkeit neu anmelden: ein Konnektor-Neustart verwirft alle Abos.
+    /// Ob das eigene Abo noch steht, entscheidet danach die Liste aus GetSubscription.
+    /// </summary>
+    private bool _resubscribeAfterOutage;
+
+    /// <summary>Zeitpunkt des letzten erfolgreichen Subscribe/Renew – fuer Firmware ohne GetSubscription.</summary>
+    private DateTime _lastSubscribedAt = DateTime.MinValue;
+
+    /// <summary>Gleiche Ereignisse (doppelte Abos, Wiederholungen) nur einmal melden.</summary>
+    private readonly ConnectorEventDeduplicator _eventDedup = new(ConnectorEventNotifications.DuplicateWindow);
+
     /// <summary>Mindestabstand zwischen zwei ereignisgesteuerten Abfragen, damit ein
     /// fehlerhaftes Topic mit Dauuerereignissen nicht zum Entenrennen fuehrt.</summary>
     private static readonly TimeSpan EventPollCooldown = TimeSpan.FromSeconds(10);
@@ -52,6 +67,19 @@ public sealed class ConnectorMonitor : IDisposable
     public IReadOnlyList<ConnectorAlert> LastAlerts { get; private set; } = [];
     public string? LastError { get; private set; }
     public DateTime? LastAttempt { get; private set; }
+
+    /// <summary>gematik-Fehlercode des letzten Fehlschlags, falls der Konnektor einen geliefert hat.</summary>
+    public string? LastErrorCode { get; private set; }
+
+    /// <summary>Fehlschlaege in Folge – Grundlage fuer den Backoff.</summary>
+    public int ConsecutiveFailures => _consecutiveFailures;
+
+    /// <summary>Wann der naechste Abruf geplant ist (regulaer oder Wiederverbindung).</summary>
+    public DateTime? NextAttemptAt { get; private set; }
+
+    /// <summary>Clientsystem-Zertifikat (P12) aus dem letzten Abruf – fuer Ablaufwarnung und Anzeige.</summary>
+    public string? ClientCertificateSubject { get; private set; }
+    public DateTime? ClientCertificateNotAfter { get; private set; }
 
     /// <summary>Letztes verarbeitete Konnektor-Ereignis (fuer Anzeige und Diagnosebericht).</summary>
     public ConnectorEvent? LastEvent { get; private set; }
@@ -112,8 +140,13 @@ public sealed class ConnectorMonitor : IDisposable
         _cts?.Dispose();
         _cts = null;
         _loop = null;
-        _activeAlertKeys.Clear();
+        lock (_activeAlertKeys)
+            _activeAlertKeys.Clear();
         _consecutiveFailures = 0;
+        _outageSince = null;
+        _resubscribeAfterOutage = false;
+        _lastSubscribedAt = DateTime.MinValue;
+        NextAttemptAt = null;
         _unreachableNotified = false;
         _subscribed = false;
         _subscriptionsAlive = false;
@@ -138,6 +171,8 @@ public sealed class ConnectorMonitor : IDisposable
         RefreshPresence(snapshot);
         if (settings.HistoryEnabled)
             ConnectorHistoryStore.UpsertNow(snapshot, DateTime.Now);
+        if (settings.MonitoringEnabled)
+            NotifyLedgerWarnings(settings, snapshot);
         Updated?.Invoke();
     }
 
@@ -167,7 +202,11 @@ public sealed class ConnectorMonitor : IDisposable
                 // Erklaerung. Dasselbe Urteil wie in der Anzeige, damit nicht die eine Stelle
                 // "aktiv" behauptet und die andere daneben pollt.
                 var minutes = _subscriptionsAlive ? Math.Clamp(settings.PollMinutes * 2, 10, 120) : Math.Clamp(settings.PollMinutes, 1, 120);
-                await Task.Delay(TimeSpan.FromMinutes(minutes), ct);
+                // Nicht erreichbar (z. B. Neustart des Konnektors): exponentiell mit Jitter
+                // wiederholen statt erst nach dem vollen Intervall – hoechstens alle 5 Minuten.
+                var delay = ConnectorReconnect.NextDelay(_consecutiveFailures, TimeSpan.FromMinutes(minutes), Random.Shared.NextDouble());
+                NextAttemptAt = DateTime.Now + delay;
+                await Task.Delay(delay, ct);
             }
             catch (OperationCanceledException)
             {
@@ -190,12 +229,24 @@ public sealed class ConnectorMonitor : IDisposable
             await ReadQesAsync(client, snapshot, ct);
             LastSnapshot = snapshot;
             LastError = null;
+            LastErrorCode = null;
+            ClientCertificateSubject = client.ClientCertificate?.Subject;
+            ClientCertificateNotAfter = client.ClientCertificate?.NotAfter;
 
             if (_unreachableNotified)
             {
                 Notify(L("Konnektor wieder erreichbar", "Connector reachable again"), L("Die Verbindung zum Konnektor ist wiederhergestellt.", "The connection to the connector has been restored."), ToastUrgency.Info, "konnektor");
             }
+            if (_consecutiveFailures > 0)
+            {
+                // Wieder da: connector.sds wurde mit diesem Abruf frisch gelesen (neuer Client).
+                // Die Abos werden neu bewertet – ein Neustart des Konnektors hat sie verworfen,
+                // und ein frueheres "aufgegeben" soll die Wiederverbindung nicht blockieren.
+                _subscriptionAttempted = false;
+                _resubscribeAfterOutage = true;
+            }
             _consecutiveFailures = 0;
+            _outageSince = null;
             _unreachableNotified = false;
 
             var alerts = ConnectorHealth.Evaluate(snapshot, settings.CertificateWarningDays, DateTime.Now);
@@ -206,12 +257,19 @@ public sealed class ConnectorMonitor : IDisposable
             // Polls ersetzt ihn, wenn kein frisches Ereignis vorliegt.
             RefreshPresence(snapshot);
 
-            foreach (var alert in alerts.Where(a => !_activeAlertKeys.Contains(a.Key)))
-                Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
+            lock (_activeAlertKeys)
+            {
+                // Ablauf- und PIN-Warnungen kommen aus dem Ledger (neustartfest, je Stufe bzw.
+                // Zustandswechsel einmal) – hier nicht doppelt melden.
+                foreach (var alert in alerts.Where(a => !_activeAlertKeys.Contains(a.Key) && !ConnectorToastOwnership.IsOwnedByLedger(a.Key)))
+                    Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
 
-            _activeAlertKeys.Clear();
-            foreach (var alert in alerts)
-                _activeAlertKeys.Add(alert.Key);
+                _activeAlertKeys.Clear();
+                foreach (var alert in alerts)
+                    _activeAlertKeys.Add(alert.Key);
+            }
+
+            NotifyLedgerWarnings(settings, snapshot);
 
             if (settings.EventSubscriptionsEnabled)
                 await EnsureSubscriptionsAsync(client, snapshot, ct);
@@ -233,11 +291,17 @@ public sealed class ConnectorMonitor : IDisposable
         catch (Exception ex)
         {
             LastError = ex.Message;
+            LastErrorCode = (ex as ConnectorFaultException)?.Code;
             _consecutiveFailures++;
-            if (_consecutiveFailures >= 2 && !_unreachableNotified)
+            _outageSince ??= DateTime.Now;
+            if (settings.HistoryEnabled)
+                ConnectorHistoryStore.RecordUnreachable(DateTime.Now);
+            if (ConnectorReconnect.ShouldNotifyUnreachable(_consecutiveFailures, _outageSince, DateTime.Now, _unreachableNotified))
             {
                 _unreachableNotified = true;
-                Notify(L("Konnektor nicht erreichbar", "Connector unreachable"), ex.Message, ToastUrgency.Error, "konnektor");
+                Notify(L("Konnektor nicht erreichbar", "Connector unreachable"),
+                    ex.Message + "\n" + L("Die App versucht es automatisch erneut.", "The app retries automatically."),
+                    ToastUrgency.Error, "konnektor");
             }
         }
         finally
@@ -262,9 +326,27 @@ public sealed class ConnectorMonitor : IDisposable
     /// </remarks>
     private async Task EnsureSubscriptionsAsync(ConnectorClient client, ConnectorSnapshot snapshot, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         var asked = !snapshot.Warnings.Any(w => w.Contains("GetSubscription", StringComparison.Ordinal));
         var ours = Ours(snapshot);
-        var action = ConnectorSubscriptionPolicy.Decide(_subscriptionAttempted, _subscribed, asked, ours, DateTime.Now);
+
+        // Firmware ohne GetSubscription: die Liste ist leer, obwohl das Abo steht. Ohne diese
+        // Bremse legte jeder Poll ein weiteres Abo an. Neu angemeldet wird nur nach einer
+        // Nichterreichbarkeit (Neustart verwirft Abos) oder vor Ablauf der 25 Stunden.
+        if (!asked && _subscribed && !_resubscribeAfterOutage &&
+            DateTime.Now - _lastSubscribedAt < ConnectorSubscriptionPolicy.RenewLead)
+        {
+            _subscriptionsAlive = true;
+            return;
+        }
+
+        // Nach einer Nichterreichbarkeit ohne GetSubscription laesst sich nicht pruefen, ob das
+        // Abo den Neustart ueberlebt hat – dann neu anmelden (doppelte Zustellungen faengt der
+        // Ereignisfilter ab). Mit GetSubscription entscheidet die tatsaechliche Liste.
+        var action = !asked && _resubscribeAfterOutage
+            ? ConnectorSubscriptionPolicy.Action.Subscribe
+            : ConnectorSubscriptionPolicy.Decide(_subscriptionAttempted, _subscribed, asked, ours, DateTime.Now);
+        _resubscribeAfterOutage = false;
         _subscriptionsAlive = ours.Any(s => s.Alive(DateTime.Now)) || (action == ConnectorSubscriptionPolicy.Action.None && _subscribed);
 
         if (action == ConnectorSubscriptionPolicy.Action.None)
@@ -303,6 +385,9 @@ public sealed class ConnectorMonitor : IDisposable
             Credentials = credentials,
             PinnedFingerprint = settings.PinnedServerThumbprint
         };
+        // Ein Neustart des Monitors waehrend des Abrufs: nichts mehr anmelden und keinen
+        // Handler an einen Lauscher haengen, den Stop() gerade abgebaut hat.
+        ct.ThrowIfCancellationRequested();
         if (!_events.IsListening && !_events.EnsureListening(options, msg => LastEventNote = msg))
             return;
 
@@ -319,6 +404,7 @@ public sealed class ConnectorMonitor : IDisposable
                     await client.RenewSubscriptionsAsync(ids, ct);
                     _subscribed = true;
                     _subscriptionsAlive = true;
+                    _lastSubscribedAt = DateTime.Now;
                     LastEventNote = LocalizationService.Pick("Ereignis-Abos verlängert.", "Event subscriptions renewed.");
                     return;
                 }
@@ -352,6 +438,7 @@ public sealed class ConnectorMonitor : IDisposable
         if (_subscribed)
         {
             _subscriptionsAlive = true;
+            _lastSubscribedAt = DateTime.Now;
             LastEventNote = LocalizationService.Pick($"Ereignis-Abos angelegt ({succeeded}).", $"Event subscriptions created ({succeeded}).");
         }
         else
@@ -467,6 +554,7 @@ public sealed class ConnectorMonitor : IDisposable
     private void OnEvent(ConnectorEvent evt)
     {
         LastEvent = evt;
+        NotifyEvent(evt);
 
         // Karte rein/raus sofort, nicht erst nach dem naechsten Abgleich: wer die Karte zieht,
         // will das ohne Umweg sehen, waehrend die eigentlichen Einzelheiten nachgezogen werden.
@@ -547,6 +635,71 @@ public sealed class ConnectorMonitor : IDisposable
     }
 
     private static string L(string de, string en) => LocalizationService.Pick(de, en);
+
+    /// <summary>
+    /// Toast fuer Karten- und Terminalereignisse nach dem eingestellten Filter. Doppelt
+    /// zugestellte Ereignisse (zwei Abos auf denselben Lauscher) werden nur einmal gemeldet.
+    /// </summary>
+    private void NotifyEvent(ConnectorEvent evt)
+    {
+        try
+        {
+            var settings = _settingsProvider().Connector;
+            if (!settings.MonitoringEnabled)
+                return;
+            var id = evt.Param("ICCSN") ?? evt.Param("CardHandle") ?? evt.Param("CtID") ?? evt.Param("CtId") ?? "";
+            if (!_eventDedup.TryAccept($"{evt.Topic?.Trim()}|{id}", DateTime.Now))
+                return;
+            if (ConnectorEventNotifications.Decide(evt, ConnectorEventToastFilter.From(settings)) is not { } toast)
+                return;
+            Notify(toast.Title, toast.Body, toast.Urgency, "konnektor");
+
+            // Der sofort nachgezogene Poll sieht denselben Vorgang als Warnung – nicht zweimal melden.
+            if (ConnectorEventNotifications.MatchingHealthKey(evt) is { } healthKey)
+                lock (_activeAlertKeys)
+                    _activeAlertKeys.Add(healthKey);
+        }
+        catch
+        {
+            // Ein Anzeigefehler darf den Lauscher nicht kippen.
+        }
+    }
+
+    /// <summary>
+    /// Ablauf- und PIN-Warnungen ueber den gespeicherten Ledger: jede Ablaufstufe einmal je
+    /// Zertifikat, PIN-Meldungen nur beim Zustandswechsel – auch ueber Neustarts hinweg.
+    /// </summary>
+    private void NotifyLedgerWarnings(ConnectorSettings settings, ConnectorSnapshot snapshot)
+    {
+        if (!settings.NotifyCertificateExpiry && !settings.NotifyPinStatus)
+            return;
+        var now = DateTime.Now;
+        var subject = ClientCertificateSubject;
+        var notAfter = ClientCertificateNotAfter;
+        var due = ConnectorWarningStore.Update(ledger =>
+        {
+            var list = new List<ConnectorAlert>();
+            if (settings.NotifyCertificateExpiry)
+                list.AddRange(ConnectorCertificateExpiry.Evaluate(ConnectorCertificateExpiry.Collect(snapshot, subject, notAfter), ledger, now));
+            if (settings.NotifyPinStatus)
+                list.AddRange(ConnectorPinWatch.Evaluate(snapshot, ledger));
+            return list;
+        });
+        foreach (var alert in due)
+            Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
+    }
+
+    /// <summary>Kurzbeschreibung der Wiederverbindung fuer Anzeige und Bericht, null wenn alles laeuft.</summary>
+    public string? DescribeReconnect(DateTime now)
+    {
+        if (_consecutiveFailures <= 0)
+            return null;
+        var wait = NextAttemptAt is { } next ? Math.Max(0, (int)Math.Ceiling((next - now).TotalSeconds)) : (int?)null;
+        return wait is { } seconds
+            ? L($"Konnektor nicht erreichbar ({_consecutiveFailures}× in Folge) – nächster Versuch in {seconds} s.",
+                $"Connector unreachable ({_consecutiveFailures}× in a row) – next attempt in {seconds} s.")
+            : L($"Konnektor nicht erreichbar ({_consecutiveFailures}× in Folge).", $"Connector unreachable ({_consecutiveFailures}× in a row).");
+    }
 
     private static void Notify(string title, string body, ToastUrgency urgency, string focusKey)
     {

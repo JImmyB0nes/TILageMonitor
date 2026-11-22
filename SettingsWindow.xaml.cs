@@ -254,6 +254,35 @@ public partial class SettingsWindow : Window
         ConnectorHistoryToggle.IsChecked = c.HistoryEnabled;
         ConnectorPollBox.Text = c.PollMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
         ConnectorWarnBox.Text = c.CertificateWarningDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ConnectorCertExpiryToggle.IsChecked = c.NotifyCertificateExpiry;
+        ConnectorPinStatusToggle.IsChecked = c.NotifyPinStatus;
+        ToastCardRemovedToggle.IsChecked = c.ToastCardRemoved;
+        ToastCardInsertedToggle.IsChecked = c.ToastCardInserted;
+        ToastTerminalDisconnectedToggle.IsChecked = c.ToastTerminalDisconnected;
+        ToastTerminalConnectedToggle.IsChecked = c.ToastTerminalConnected;
+        ToastForSmcBToggle.IsChecked = c.ToastForSmcB;
+        ToastForHbaToggle.IsChecked = c.ToastForHba;
+    }
+
+    /// <summary>
+    /// Benachrichtigungsfilter speichern. Kein Neustart des Monitors noetig – er liest die
+    /// Einstellungen bei jedem Ereignis und Abruf neu, und ein Neustart wuerde die Abos kappen.
+    /// </summary>
+    private void ConnectorNotify_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        var c = _settings.Connector;
+        c.NotifyCertificateExpiry = ConnectorCertExpiryToggle.IsChecked == true;
+        c.NotifyPinStatus = ConnectorPinStatusToggle.IsChecked == true;
+        c.ToastCardRemoved = ToastCardRemovedToggle.IsChecked == true;
+        c.ToastCardInserted = ToastCardInsertedToggle.IsChecked == true;
+        c.ToastTerminalDisconnected = ToastTerminalDisconnectedToggle.IsChecked == true;
+        c.ToastTerminalConnected = ToastTerminalConnectedToggle.IsChecked == true;
+        c.ToastForSmcB = ToastForSmcBToggle.IsChecked == true;
+        c.ToastForHba = ToastForHbaToggle.IsChecked == true;
+        SettingsStore.Save(_settings);
+        _ownerMain.ApplySettings(_settings);
     }
 
     private void ConnectorSetting_Changed(object sender, RoutedEventArgs e)

@@ -412,7 +412,10 @@ public static class ConnectorProtocol
         else if (string.Equals(code, "4003", StringComparison.Ordinal))
             message.Append(" Fuer diese Operation fehlt eine Angabe im Aufrufkontext, die der Konnektor zwingend braucht.");
 
-        return new ConnectorFaultException(message.ToString(), string.IsNullOrWhiteSpace(code) ? null : code);
+        // Klartext zum gematik-Code (gemSpec_Kon) anhaengen – der Originaltext bleibt vorn,
+        // damit Support und Protokoll den Wortlaut des Konnektors sehen.
+        var normalizedCode = string.IsNullOrWhiteSpace(code) ? null : code.Trim();
+        return new ConnectorFaultException(ConnectorErrorCodes.Annotate(message.ToString(), normalizedCode), normalizedCode);
     }
 
     public static List<ConnectorCard> ParseCards(XElement response) =>

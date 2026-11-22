@@ -140,6 +140,9 @@ public partial class ConnectorWindow : Window
         {
             if (Nav.SelectedIndex >= 0)
                 Tabs.SelectedIndex = Nav.SelectedIndex;
+            // Der Verlauf waechst auch ohne neuen Datenstand (Fehlschlaege) – beim Oeffnen frisch lesen.
+            if (ReferenceEquals(Nav.SelectedItem, NavHistory))
+                RenderHistory();
         }
         finally
         {
@@ -619,7 +622,10 @@ public partial class ConnectorWindow : Window
         RenderServices(snapshot);
         RenderCertificates(snapshot);
         RenderEventsSummary();
+        RenderHistory();
         FooterText.Text = L($"Letzter Abruf: {snapshot.RetrievedAt:dd.MM.yyyy HH:mm:ss}", $"Last retrieved: {snapshot.RetrievedAt:yyyy-MM-dd HH:mm:ss}");
+        if (_ownerMain.ConnectorMonitor.DescribeReconnect(DateTime.Now) is { } reconnect)
+            FooterText.Text += "  ·  " + reconnect;
     }
 
     private void ShowStatus(string title, string detail, string statusKey, string glyph = "\u2022")
@@ -1046,58 +1052,76 @@ public partial class ConnectorWindow : Window
         if (CertificatesPanel is null)
             return;
         CertificatesPanel.Children.Clear();
-        var days = _ownerMain.GetSettingsSnapshot().Connector.CertificateWarningDays;
         var now = DateTime.Now;
         var any = false;
+
+        void AddTile(string title, DateTime notAfter)
+        {
+            any = true;
+            var daysLeft = ConnectorCertificateExpiry.DaysLeft(notAfter, now);
+            var color = ConnectorCertificateExpiry.BrushKeyFor(daysLeft);
+            var tile = new Border
+            {
+                Style = (Style)FindResource("SubtlePanelStyle"),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var body = new StackPanel();
+            var head = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            head.Children.Add(new TextBlock
+            {
+                Text = "\uE8D7",
+                FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                FontSize = 16,
+                Foreground = Brush(color),
+                Margin = new Thickness(0, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            head.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brush("TextMain"),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            body.Children.Add(head);
+            // Resttage immer zeigen, nicht erst ab der Warnschwelle – die Stufen 90/30/7
+            // stehen in Farbe, die Zahl selbst ist die Information.
+            body.Children.Add(new TextBlock
+            {
+                Text = L($"gültig bis {notAfter:dd.MM.yyyy}", $"valid until {notAfter:yyyy-MM-dd}")
+                       + (daysLeft < 0
+                           ? L($"  · abgelaufen seit {-daysLeft} Tagen", $"  · expired {-daysLeft} days ago")
+                           : L($"  · noch {daysLeft} Tage", $"  · {daysLeft} days left")),
+                FontSize = 12,
+                Foreground = daysLeft <= 30 ? Brush(color) : Brush("TextMuted"),
+                Margin = new Thickness(26, 4, 0, 6)
+            });
+            var barBg = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush("ChipBackground") };
+            var pct = Math.Clamp(daysLeft / 365.0, 0, 1);
+            var bar = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush(color), Width = Math.Max(4, 220 * pct), HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
+            barBg.Child = bar;
+            body.Children.Add(barBg);
+            tile.Child = body;
+            CertificatesPanel.Children.Add(tile);
+        }
+
         foreach (var card in CardOrder(snapshot.Cards))
         {
             foreach (var cert in card.Certificates)
-            {
-                any = true;
-                var left = (cert.NotAfter - now).TotalDays;
-                var color = left <= 0 ? "StatusOutage" : left <= days ? "StatusPartial" : "StatusOk";
-                var tile = new Border
-                {
-                    Style = (Style)FindResource("SubtlePanelStyle"),
-                    Margin = new Thickness(0, 0, 0, 10)
-                };
-                var body = new StackPanel();
-                var head = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
-                head.Children.Add(new TextBlock
-                {
-                    Text = "\uE8D7",
-                    FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-                    FontSize = 16,
-                    Foreground = Brush(color),
-                    Margin = new Thickness(0, 0, 10, 0),
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                head.Children.Add(new TextBlock
-                {
-                    Text = $"{card.DisplayName} · {cert.CertRef}",
-                    FontSize = 13,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = Brush("TextMain"),
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                body.Children.Add(head);
-                body.Children.Add(new TextBlock
-                {
-                    Text = L($"gültig bis {cert.NotAfter:dd.MM.yyyy}", $"valid until {cert.NotAfter:yyyy-MM-dd}")
-                           + (left <= 0 ? L("  · abgelaufen", "  · expired") : left <= days ? L($"  · noch {Math.Max(0, (int)left)} Tage", $"  · {Math.Max(0, (int)left)} days left") : ""),
-                    FontSize = 12,
-                    Foreground = Brush("TextMuted"),
-                    Margin = new Thickness(26, 4, 0, 6)
-                });
-                var barBg = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush("ChipBackground") };
-                var pct = Math.Clamp(left / 365.0, 0, 1);
-                var bar = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush(color), Width = Math.Max(4, 220 * pct), HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
-                barBg.Child = bar;
-                body.Children.Add(barBg);
-                tile.Child = body;
-                CertificatesPanel.Children.Add(tile);
-            }
+                AddTile($"{card.DisplayName} · {cert.CertRef}", cert.NotAfter);
+            // Ohne gelesene Zertifikate wenigstens das Ablaufdatum aus GetCards zeigen.
+            if (card.Certificates.Count == 0 && card.SupportsPinManagement && card.CertificateExpirationDate is { } expiry && expiry != default)
+                AddTile($"{card.DisplayName} · {L("Karte (GetCards)", "card (GetCards)")}", expiry);
         }
+
+        var monitor = _ownerMain.ConnectorMonitor;
+        if (monitor.ClientCertificateNotAfter is { } clientNotAfter && clientNotAfter != default)
+        {
+            var subject = string.IsNullOrWhiteSpace(monitor.ClientCertificateSubject) ? "P12" : monitor.ClientCertificateSubject;
+            AddTile($"{L("Clientsystem-Zertifikat", "Client system certificate")} · {subject}", clientNotAfter);
+        }
+
         if (CertificatesEmpty is not null)
             CertificatesEmpty.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
     }

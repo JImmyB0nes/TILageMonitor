@@ -66,7 +66,7 @@ TI-Lage Monitor zeigt den aktuellen Status von **sieben TI-Diensten** als Tray-A
 | 📈 | **14-Tage-Verlauf** | Übersicht · Stunden · Ereignisse — KPI, Fokus-Chips, Timeline |
 | 📄 | **CSV-Störungsbericht** | Aus dem Verlaufsfenster: Semikolon-CSV, UTF-8 mit BOM, für Excel |
 | 💬 | **Meldungen** | Aktuelle Störungen und Hinweise im Hauptfenster, mit umbrechendem Langtext |
-| 🔌 | **Konnektor-Anbindung** | SDS, VPN TI/SIS, Karten, Terminals, Zertifikate, PIN-Status, CETP-Ereignisse |
+| 🔌 | **Konnektor-Anbindung** | SDS, VPN TI/SIS, Karten, Terminals, Zertifikate, PIN-Status, CETP-Ereignisse, 14-Tage-Konnektor-Verlauf, Ablauf- und PIN-Warnungen |
 | ⬇️ | **Update-Prüfung** | GitHub-Releases prüfen, SHA-256 verifizieren, optional still installieren |
 | 🎨 | **Fluent-Oberfläche** | Hell-/Dunkelmodus, Sprache, Autostart, Start in den Tray |
 | ⚙️ | **Einstellungen** | Karten für Sprache, Darstellung, Start, Updates, Benachrichtigungen und Konnektor |
@@ -150,7 +150,15 @@ Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf,
 
 **TLS:** Der HTTPS-Zugang zum Konnektor nutzt BouncyCastle (TLS 1.2, optional 1.3) mit **Brainpool** (P-256/P-384/P-512) und **RSA** bzw. NIST-Kurven. Das Clientsystem-Zertifikat (P12) wird nur im Speicher gehalten; die Kette geht vollständig mit. Beim ersten Verbinden wird der SHA-256-Fingerprint des Konnektor-Zertifikats angezeigt und nach Bestätigung **gepinnt**. Ist TLS im SDS oder in den Einstellungen vorgeschrieben, läuft auch die Ereignissenke über TLS (CETP1: die App ist TLS-Server, der Konnektor TLS-Client).
 
-**Hintergrund-Toasts (abschaltbar):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Terminal getrennt, keine SMC-B gesteckt, SMC-B nicht freigeschaltet, PIN gesperrt oder Transport-PIN, Kartenzertifikat läuft ab (Schwelle einstellbar, Standard 60 Tage).
+**Hintergrund-Toasts (abschaltbar):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Terminal getrennt, keine SMC-B gesteckt, Transport-PIN.
+
+**Neu in 3.1:**
+- **Zertifikats-Ablaufwarnung** für SMC-B, HBA und das Clientsystem-Zertifikat (P12) in drei Stufen — 90, 30 und 7 Tage vorher, dazu „abgelaufen“. Jede Stufe kommt je Zertifikat genau einmal, auch über Neustarts hinweg. Die Resttage stehen im Reiter **Zertifikate**.
+- **PIN-Status-Warnung:** SMC-B nicht freigeschaltet (z. B. nach Konnektor-Neustart), PIN gesperrt oder nur noch ein Versuch (`GetPinStatus`). Gemeldet wird nur der Zustandswechsel.
+- **Ereignis-Toasts** für `CARD/REMOVED` und `CT/DISCONNECTED` (optional auch `CARD/INSERTED` und `CT/CONNECTED`), filterbar nach Ereignis und Kartentyp (SMC-B, HBA). Die eGK wird nie gemeldet.
+- **Konnektor-Verlauf (14 Tage)** im neuen Reiter **Verlauf**: erreichbar ja/nein, VPN TI, VPN SIS, SMC-B und HBA gesteckt — als Tageskacheln mit Stundenansicht.
+- **Verständliche Fehlermeldungen:** gematik-Fehlercodes (GERROR) erscheinen mit Klartext nach gemSpec_Kon, z. B. `4004 – Ungültige Mandanten-ID` oder `4204 – Clientsystem aus dem Aufrufkontext konnte nicht authentifiziert werden`.
+- **Automatische Wiederverbindung** mit exponentiellem Backoff (15 s bis höchstens 5 min, mit Jitter). Nach einem Konnektor-Neustart werden `connector.sds` neu gelesen und die Ereignis-Abos neu angelegt.
 
 **Aktionen an SMC-B und HBA** (nur auf Knopfdruck): PIN verifizieren, PIN bzw. Transport-PIN ändern, mit PUK entsperren, Zertifikat online prüfen (OCSP). Enable/Disable der PIN nur, wenn der Konnektor CardService 8.2 oder höher anbietet. HBA-qSig und vergleichbare Vorläufer zeigen typischerweise nur PIN.QES.
 
@@ -194,6 +202,7 @@ Lokal unter `%AppData%\TILageMonitor\`:
 | `last-lage.json` | Offline-Cache des letzten TI-Stands |
 | `history.json` | Stündliche lokale Ergänzung zum TI-Verlauf |
 | `connector-history.json` | Optionaler lokaler Konnektor-Verlauf (14 Tage) |
+| `connector-warnings.json` | Bereits gemeldete Ablaufstufen und PIN-Zustände (gegen doppelte Toasts) |
 
 <details>
 <summary><strong>API-Endpunkte (gematik TI-Status)</strong></summary>

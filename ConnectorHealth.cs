@@ -57,6 +57,17 @@ public static class ConnectorHealth
 
             foreach (var pin in card.PinStates.Where(p => p.Error is null))
             {
+                // Eigene Zeile neben den übrigen Hinweisen: ein letzter Versuch ist unabhängig
+                // davon kritisch, ob die SMC-B gerade freigeschaltet ist oder nicht.
+                if (!pin.IsBlocked && !pin.IsVerified && pin.LeftTries == 1)
+                {
+                    alerts.Add(new ConnectorAlert(
+                        $"pin-lasttry-{id}-{pin.PinType}",
+                        L($"{card.DisplayName}: nur noch 1 PIN-Versuch", $"{card.DisplayName}: only 1 PIN attempt left"),
+                        L($"{pin.PinType} hat nur noch einen Versuch. Eine weitere Fehleingabe sperrt die PIN.", $"{pin.PinType} has only one attempt left. One more wrong entry blocks the PIN."),
+                        ToastUrgency.Error));
+                }
+
                 if (pin.IsBlocked)
                 {
                     alerts.Add(new ConnectorAlert(

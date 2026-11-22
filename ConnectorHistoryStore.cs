@@ -28,6 +28,30 @@ public sealed class ConnectorHourSnapshot
 
     [JsonPropertyName("tiOnline")]
     public bool? TiOnline { get; set; }
+
+    /// <summary>VPN SIS (Internet über den Konnektor) – schlechtester Stand der Stunde.</summary>
+    [JsonPropertyName("sisOnline")]
+    public bool? SisOnline { get; set; }
+
+    /// <summary>Erfolgreiche Abrufe in dieser Stunde (Konnektor erreichbar).</summary>
+    [JsonPropertyName("polls")]
+    public int Polls { get; set; }
+
+    /// <summary>Fehlgeschlagene Abrufe in dieser Stunde (Konnektor nicht erreichbar).</summary>
+    [JsonPropertyName("unreachable")]
+    public int Unreachable { get; set; }
+
+    /// <summary>Abrufe, in denen GetCards geantwortet hat – Bezugsgröße für die Kartenanwesenheit.</summary>
+    [JsonPropertyName("cardPolls")]
+    public int CardPolls { get; set; }
+
+    /// <summary>Davon: SMC-B gesteckt.</summary>
+    [JsonPropertyName("smcbPolls")]
+    public int SmcbPolls { get; set; }
+
+    /// <summary>Davon: HBA gesteckt.</summary>
+    [JsonPropertyName("hbaPolls")]
+    public int HbaPolls { get; set; }
 }
 
 public sealed class ConnectorHistoryFile
@@ -38,7 +62,7 @@ public sealed class ConnectorHistoryFile
 
 public static class ConnectorHistoryStore
 {
-    private const int KeepDays = 14;
+    public const int KeepDays = 14;
     private const int HoursPerDay = 24;
 
     /// <summary>
@@ -108,8 +132,31 @@ public static class ConnectorHistoryStore
     private static ConnectorHistoryFile UpsertLocked(ConnectorSnapshot snapshot, DateTime now)
     {
         var file = Load();
-        file.Hours ??= new List<ConnectorHourSnapshot>();
+        Apply(file, snapshot, now);
+        Prune(file, now.Date);
+        Save(file);
+        return file;
+    }
 
+    /// <summary>
+    /// Vermerkt einen fehlgeschlagenen Abruf (Konnektor nicht erreichbar) in der aktuellen Stunde.
+    /// </summary>
+    public static ConnectorHistoryFile RecordUnreachable(DateTime now)
+    {
+        lock (Gate)
+        {
+            var file = Load();
+            ApplyUnreachable(file, now);
+            Prune(file, now.Date);
+            Save(file);
+            return file;
+        }
+    }
+
+    /// <summary>Stunde zum Zeitpunkt anlegen oder holen (I/O-frei).</summary>
+    internal static ConnectorHourSnapshot HourFor(ConnectorHistoryFile file, DateTime now)
+    {
+        file.Hours ??= new List<ConnectorHourSnapshot>();
         var hourKey = HistoryStore.GetHourKey(new DateTimeOffset(now, TimeZoneInfo.Local.GetUtcOffset(now)));
         var hour = file.Hours.FirstOrDefault(h => h.HourKey == hourKey);
         if (hour is null)
@@ -117,6 +164,13 @@ public static class ConnectorHistoryStore
             hour = new ConnectorHourSnapshot { HourKey = hourKey };
             file.Hours.Add(hour);
         }
+        return hour;
+    }
+
+    /// <summary>Uebernimmt einen erfolgreichen Abruf in die Stunde (I/O-frei, testbar).</summary>
+    public static void Apply(ConnectorHistoryFile file, ConnectorSnapshot snapshot, DateTime now)
+    {
+        var hour = HourFor(file, now);
 
         foreach (var alert in ConnectorHealth.Evaluate(snapshot, 60, now))
         {
@@ -134,17 +188,30 @@ public static class ConnectorHistoryStore
         hour.Terminals = Math.Max(hour.Terminals, snapshot.Terminals.Count);
         if (snapshot.Resource?.IsTiOnline is { } online)
             hour.TiOnline = hour.TiOnline == false ? false : online;
+        if (snapshot.Resource?.IsSisOnline is { } sis)
+            hour.SisOnline = hour.SisOnline == false ? false : sis;
 
-        Prune(file, now.Date);
-        Save(file);
-        return file;
+        hour.Polls++;
+        var cardsKnown = !snapshot.Warnings.Any(w => w.Contains("GetCards", StringComparison.Ordinal));
+        if (cardsKnown)
+        {
+            hour.CardPolls++;
+            if (snapshot.Cards.Any(c => c.IsSmcB))
+                hour.SmcbPolls++;
+            if (snapshot.Cards.Any(c => c.IsHba || c.IsHbaPredecessor))
+                hour.HbaPolls++;
+        }
     }
+
+    /// <summary>Vermerkt einen Fehlschlag in der Stunde (I/O-frei, testbar).</summary>
+    public static void ApplyUnreachable(ConnectorHistoryFile file, DateTime now) => HourFor(file, now).Unreachable++;
 
     /// <summary>Deckung der letzten Stunden – Abschaetzung, ob der Verlauf ueberhaupt traegt.</summary>
     public static int CountCoveredHours(ConnectorHistoryFile file) =>
         file.Hours.Select(h => h.HourKey).Distinct(StringComparer.Ordinal).Count();
 
-    private static void Prune(ConnectorHistoryFile file, DateTime todayLocal)
+    /// <summary>Entfernt Stunden, die älter als 14 Tage sind (heute zählt mit).</summary>
+    public static void Prune(ConnectorHistoryFile file, DateTime todayLocal)
     {
         var oldest = todayLocal.AddDays(-(KeepDays - 1));
         file.Hours.RemoveAll(h =>
