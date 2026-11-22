@@ -4,113 +4,124 @@ using Xunit;
 namespace TILageMonitor.Tests;
 
 /// <summary>
-/// Prueft das Zerlegen des hereinkommenden Ereignisstroms – die Stelle, an der ein halbes
-/// Dokument bisher lautlos wegfiel. Der Konnektor liefert eine SOAP-Huelle regelmaessig in
-/// mehreren TCP-Stuecken; wer am inneren Tag schneidet, verliert das Ereignis ohne jede
-/// Meldung. Die Tests hier bilden genau diese Lieferformen nach, ohne echten Konnektor.
+/// CETP-Rahmen nach gemSpec_Kon TIP1-A_4596: Magic CETP, 4-Byte-Länge Big-Endian, UTF-8-XML.
+/// Teilreads und mehrere Nachrichten hintereinander dürfen kein Ereignis verschlucken.
 /// </summary>
 public sealed class ConnectorEventStreamTests
 {
-    private const string Envelope =
+    private static readonly string EventXml =
         """
-        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-          <soap:Body>
-            <evt:Event xmlns:evt="http://ws.gematik.de/conn/EventService/v7.2">
-              <evt:Topic>http://ws.gematik.de/conn/EventService/v7.2#CardInserted</evt:Topic>
-              <evt:Message><evt:Parameter><evt:Key>CtId</evt:Key><evt:Value>CT1</evt:Value></evt:Parameter></evt:Message>
-            </evt:Event>
-          </soap:Body>
-        </soap:Envelope>
+        <?xml version="1.0" encoding="UTF-8"?>
+        <evt:Event xmlns:evt="http://ws.gematik.de/conn/EventService/v7.2">
+          <evt:Topic>CARD/INSERTED</evt:Topic>
+          <evt:Message><evt:Parameter><evt:Key>CtId</evt:Key><evt:Value>CT1</evt:Value></evt:Parameter></evt:Message>
+        </evt:Event>
         """;
 
     [Fact]
-    public void TakeMessage_keeps_an_incomplete_envelope_until_the_closing_tag_arrives()
+    public void Reader_keeps_a_partial_frame_until_the_payload_arrives()
     {
-        // Erster Lesedurchgang: die Huelle ist angefangen, ihr Ende fehlt noch.
-        var head = Envelope[..200];
-        var pending = new StringBuilder(head);
+        var frame = ConnectorCetp.FrameXml(EventXml);
+        var reader = new ConnectorCetp.Reader();
+        reader.Add(frame.AsSpan(0, 6));
+        Assert.False(reader.TryDequeueXml(out _));
+        Assert.False(reader.Closed);
 
-        Assert.False(ConnectorEventStream.TakeMessage(ref pending, out _));
-        // Der halbe Text bleibt erhalten – ein Abschneiden haette das Ereignis zerstoert.
-        Assert.Equal(head, pending.ToString());
+        reader.Add(frame.AsSpan(6));
+        Assert.True(reader.TryDequeueXml(out var xml));
+        Assert.Contains("CARD/INSERTED", xml);
+        Assert.False(reader.TryDequeueXml(out _));
     }
 
     [Fact]
-    public void TakeMessage_cuts_at_the_outer_envelope_end_when_the_body_is_split_across_reads()
+    public void Reader_splits_payload_across_many_small_reads()
     {
-        var pending = new StringBuilder();
-
-        // Stueck 1: Huelle und Ereignis-Anfang, aber das innerste </Event> ist schon da,
-        // das aeussere </Envelope> fehlt. Genau der Fall, der zur frueheren Fassung fuehrte.
-        var first = Envelope[..150];
-        pending.Append(first);
-        Assert.False(ConnectorEventStream.TakeMessage(ref pending, out _));
-
-        // Stueck 2: Rest nebst Schluss-Tags.
-        pending.Append(Envelope[150..]);
-        Assert.True(ConnectorEventStream.TakeMessage(ref pending, out var message));
-        // Das Schluss-Tag steht mit Praefix da, nach dem schraegen Strich also nicht der Name.
-        Assert.EndsWith("</soap:Envelope>", message.TrimEnd());
-        Assert.Equal("", pending.ToString());
+        var frame = ConnectorCetp.FrameXml(EventXml);
+        var reader = new ConnectorCetp.Reader();
+        for (var i = 0; i < frame.Length; i++)
+        {
+            reader.Add(frame.AsSpan(i, 1));
+            if (i < frame.Length - 1)
+                Assert.False(reader.TryDequeueXml(out _));
+        }
+        Assert.True(reader.TryDequeueXml(out var xml));
+        Assert.Contains("CT1", xml);
     }
 
     [Fact]
-    public void TakeMessage_reads_two_back_to_back_messages_from_one_read()
+    public void Reader_reads_two_back_to_back_messages_from_one_chunk()
     {
-        var pending = new StringBuilder(Envelope + Envelope);
+        var first = ConnectorCetp.FrameXml("<Event><Topic>CARD/INSERTED</Topic></Event>");
+        var second = ConnectorCetp.FrameXml("<Event><Topic>CARD/REMOVED</Topic></Event>");
+        var all = new byte[first.Length + second.Length];
+        Buffer.BlockCopy(first, 0, all, 0, first.Length);
+        Buffer.BlockCopy(second, 0, all, first.Length, second.Length);
 
-        Assert.True(ConnectorEventStream.TakeMessage(ref pending, out var first));
-        Assert.True(ConnectorEventStream.TakeMessage(ref pending, out var second));
-        Assert.NotEqual("", first);
-        Assert.NotEqual("", second);
-        Assert.Equal("", pending.ToString());
+        var reader = new ConnectorCetp.Reader();
+        reader.Add(all);
+        Assert.True(reader.TryDequeueXml(out var a));
+        Assert.True(reader.TryDequeueXml(out var b));
+        Assert.Contains("CARD/INSERTED", a);
+        Assert.Contains("CARD/REMOVED", b);
+        Assert.False(reader.TryDequeueXml(out _));
     }
 
     [Fact]
-    public void TakeMessage_accepts_a_bare_event_without_any_envelope()
+    public void Reader_closes_on_bad_magic_when_garbage_is_long()
     {
-        const string bare =
-            """
-            <evt:Event xmlns:evt="http://ws.gematik.de/conn/EventService/v7.2">
-              <evt:Topic>http://ws.gematik.de/conn/EventService/v7.2#CardRemoved</evt:Topic>
-            </evt:Event>
-            """;
-
-        var pending = new StringBuilder(bare);
-        Assert.True(ConnectorEventStream.TakeMessage(ref pending, out var message));
-        Assert.Contains("CardRemoved", message);
-        Assert.Equal("", pending.ToString());
-    }
-
-    [Theory]
-    [InlineData("<soap:Envelope", true)]     // ubliclich mit Praefix
-    [InlineData("<Envelope", true)]          // ohne Praefix
-    [InlineData("<ns1:Envelope", true)]      // anderes Praefix
-    [InlineData("Envelope", false)]         // blosses Wort, kein Elementanfang
-    [InlineData("kein XML", false)]
-    public void HasOpeningEnvelope_recognizes_a_prefixed_tag(string text, bool expected)
-    {
-        Assert.Equal(expected, ConnectorEventStream.HasOpeningEnvelope(text));
+        var reader = new ConnectorCetp.Reader();
+        reader.Add(Encoding.ASCII.GetBytes(new string('X', 80)));
+        Assert.False(reader.TryDequeueXml(out _));
+        Assert.True(reader.Closed);
+        Assert.Contains("Magic", reader.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void A_bare_event_is_not_cut_early_while_an_envelope_is_still_open()
+    public void Reader_resyncs_when_magic_appears_after_a_short_prefix()
     {
-        // Die Huelle laeuft, ihr Schluss fehlt. Der Innen-Tag "durfte" nicht als Ende gelten –
-        // das war der eigentliche Fehler, nicht nur ein Randfall.
-        var pending = new StringBuilder("<soap:Envelope><evt:Event><evt:Topic>x</evt:Topic></evt:Event>");
-        Assert.False(ConnectorEventStream.TakeMessage(ref pending, out _));
+        var frame = ConnectorCetp.FrameXml("<Event><Topic>CT/CONNECTED</Topic></Event>");
+        var reader = new ConnectorCetp.Reader();
+        var prefixed = new byte[3 + frame.Length];
+        prefixed[0] = (byte)'x';
+        prefixed[1] = (byte)'y';
+        prefixed[2] = (byte)'z';
+        Buffer.BlockCopy(frame, 0, prefixed, 3, frame.Length);
+        reader.Add(prefixed);
+        Assert.True(reader.TryDequeueXml(out var xml));
+        Assert.Contains("CT/CONNECTED", xml);
+        Assert.False(reader.Closed);
     }
 
     [Fact]
-    public void ParseEvent_survives_the_full_envelope_form()
+    public void Reader_closes_on_oversize_length()
     {
-        // Dieselbe Nachricht, die ueber dem Draht ankommt – bisher wurde nur die reine Form
-        // getestet. Der Parser muss auch in der Huelle das Ereignis finden.
-        var evt = ConnectorProtocol.ParseEvent(Envelope);
+        var header = new byte[] { (byte)'C', (byte)'E', (byte)'T', (byte)'P', 0x7F, 0xFF, 0xFF, 0xFF };
+        var reader = new ConnectorCetp.Reader();
+        reader.Add(header);
+        Assert.False(reader.TryDequeueXml(out _));
+        Assert.True(reader.Closed);
+    }
 
+    [Fact]
+    public void Frame_roundtrip_preserves_utf8_payload()
+    {
+        var xml = "<Event><Topic>CERT/CARD/STATUS</Topic><Note>äöü</Note></Event>";
+        var frame = ConnectorCetp.FrameXml(xml);
+        Assert.Equal("CETP"u8.ToArray(), frame[..4].ToArray());
+        var length = (frame[4] << 24) | (frame[5] << 16) | (frame[6] << 8) | frame[7];
+        Assert.Equal(Encoding.UTF8.GetByteCount(xml), length);
+        var reader = new ConnectorCetp.Reader();
+        reader.Add(frame);
+        Assert.True(reader.TryDequeueXml(out var recovered));
+        Assert.Equal(xml, recovered);
+    }
+
+    [Fact]
+    public void ParseEvent_reads_official_topic_from_a_framed_payload()
+    {
+        var evt = ConnectorProtocol.ParseEvent(EventXml);
         Assert.NotNull(evt);
-        Assert.EndsWith("#CardInserted", evt!.Topic);
+        Assert.Equal("CARD/INSERTED", evt!.Topic);
         Assert.Equal("CT1", evt.Param("CtId"));
     }
 }

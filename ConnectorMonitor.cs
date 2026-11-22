@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.NetworkInformation;
 
 namespace TILageMonitor;
@@ -30,6 +31,7 @@ public sealed class ConnectorMonitor : IDisposable
     /// abgelaufenes Abo ueberhaupt auf.
     /// </summary>
     private bool _subscriptionsAlive;
+    private bool _eventHandlerRegistered;
     private DateTime _lastEventPoll = DateTime.MinValue;
 
     /// <summary>Mindestabstand zwischen zwei ereignisgesteuerten Abfragen, damit ein
@@ -117,6 +119,7 @@ public sealed class ConnectorMonitor : IDisposable
         _subscriptionsAlive = false;
         _subscriptionAttempted = false;
         _events.EventReceived -= OnEvent;
+        _eventHandlerRegistered = false;
         _events.Dispose();
     }
 
@@ -259,66 +262,118 @@ public sealed class ConnectorMonitor : IDisposable
     /// </remarks>
     private async Task EnsureSubscriptionsAsync(ConnectorClient client, ConnectorSnapshot snapshot, CancellationToken ct)
     {
-        // Leere Liste ist zweierlei: die Abos sind weg, oder GetSubscription hat nicht
-        // geantwortet. Ersteres erneuert man, zweiteres haelt man – sonst wurde ein Konnektor
-        // ohne diesen Dienst bei jedem Poll einen neuen Anlauf kosten.
         var asked = !snapshot.Warnings.Any(w => w.Contains("GetSubscription", StringComparison.Ordinal));
         var ours = Ours(snapshot);
-        if (asked)
-            _subscriptionsAlive = ours.Any(s => s.Alive(DateTime.Now));
-        if (_subscribed && _subscriptionsAlive)
-            return;
+        var action = ConnectorSubscriptionPolicy.Decide(_subscriptionAttempted, _subscribed, asked, ours, DateTime.Now);
+        _subscriptionsAlive = ours.Any(s => s.Alive(DateTime.Now)) || (action == ConnectorSubscriptionPolicy.Action.None && _subscribed);
 
-        // Ein Anlauf pro Neustart, solange der Konnektor nichts zurueckliefert: ohne diesen
-        // Schutz wurde jeder Poll erneut einen Port besetzen und funf Subscribe-Aufrufe
-        // senden, wenn die Firmware gar keine Abos annimmt. Anders steht es, wenn die Liste
-        // zwar geliefert, aber leer ist – dann ist das Abo abgelaufen, und genau dafuer ist
-        // die Erneuerung da. Sie wurde sonst nie gewagt.
-        if (_subscriptionAttempted && (!asked || ours.Count == 0))
+        if (action == ConnectorSubscriptionPolicy.Action.None)
             return;
+        if (action == ConnectorSubscriptionPolicy.Action.GiveUp)
+        {
+            if (!_subscribed)
+            {
+                LastEventNote = LastEventNote ?? LocalizationService.Pick(
+                    "Kein Ereignis-Abo durchführbar – die App pollt im eingestellten Intervall weiter.",
+                    "Event subscription not available – the app keeps polling at the configured interval.");
+            }
+            return;
+        }
+
         _subscriptionAttempted = true;
+        var settings = _settingsProvider().Connector;
+        var useTls = settings.UseTls || snapshot.Directory?.TlsMandatory == true;
+        ConnectorClientCredentials? credentials = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(settings.ClientCertificatePath) && File.Exists(settings.ClientCertificatePath))
+                credentials = ConnectorClient.LoadClientCertificate(settings.ClientCertificatePath, SecretProtector.Unprotect(settings.ClientCertificatePasswordProtected));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LastEventNote = ex.Message;
+            if (useTls)
+                return;
+        }
 
-        if (!_events.IsListening && !_events.EnsureListening(msg => LastEventNote = msg))
+        var options = new ConnectorEventSinkOptions
+        {
+            Host = settings.Host,
+            UseTls = useTls,
+            Credentials = credentials,
+            PinnedFingerprint = settings.PinnedServerThumbprint
+        };
+        if (!_events.IsListening && !_events.EnsureListening(options, msg => LastEventNote = msg))
             return;
 
-        var topics = EventTopics().ToList();
+        RegisterEventHandler();
+
+        if (action == ConnectorSubscriptionPolicy.Action.Renew)
+        {
+            var ids = ours.Where(s => !string.IsNullOrWhiteSpace(s.SubscriptionId)).Select(s => s.SubscriptionId).ToList();
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+                if (ids.Count > 0)
+                {
+                    await client.RenewSubscriptionsAsync(ids, ct);
+                    _subscribed = true;
+                    _subscriptionsAlive = true;
+                    LastEventNote = LocalizationService.Pick("Ereignis-Abos verlängert.", "Event subscriptions renewed.");
+                    return;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LastEventNote = LocalizationService.Pick(
+                    "Abo-Verlängerung fehlgeschlagen, neuer Anlauf: " + ex.Message,
+                    "Subscription renewal failed, retrying: " + ex.Message);
+                // fall through to Subscribe
+            }
+        }
 
         var succeeded = 0;
-        foreach (var name in topics)
+        foreach (var topic in ConnectorTopics.DefaultSubscriptions)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
-                var (id, _) = await client.SubscribeAsync(_events.EventTo ?? "", name, ct);
+                var (id, _) = await client.SubscribeAsync(_events.EventTo ?? "", topic, ct);
                 if (!string.IsNullOrWhiteSpace(id))
                     succeeded++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Topic von dieser Firmware nicht unterstuetzt – naechstes probieren.
+                // Topic von dieser Firmware nicht unterstützt – nächstes probieren.
             }
         }
 
         _subscribed = succeeded > 0;
         if (_subscribed)
         {
-            // Der eigene Erfolg gilt erst bis zum naechsten Datenstand als bestaetigt. Ohne
-            // die Vorleistung wuerde gleich nach dem ersten Anlauf "fuehrt sie nicht mehr"
-            // dastehen, weil der Datenstand, aus dem Ours() schaepft, aelter ist als das Abo.
             _subscriptionsAlive = true;
-            _events.EventReceived += OnEvent;
+            LastEventNote = LocalizationService.Pick($"Ereignis-Abos angelegt ({succeeded}).", $"Event subscriptions created ({succeeded}).");
         }
         else
         {
-            // Kein einziges Abo geschafft: Listener wieder zuhalten und beim Pollen bleiben.
             _events.EventReceived -= OnEvent;
+            _eventHandlerRegistered = false;
             _events.Dispose();
-            LastEventNote = L("Kein Ereignis-Abo durchgefuehrt – die App pollt im eingestellten Intervall weiter.",
+            LastEventNote = LocalizationService.Pick(
+                "Kein Ereignis-Abo durchgeführt – die App pollt im eingestellten Intervall weiter.",
                 "No event subscription succeeded – the app keeps polling at the configured interval.");
         }
     }
 
-    /// <summary>
+    private void RegisterEventHandler()
+    {
+        if (_eventHandlerRegistered)
+            return;
+        _events.EventReceived += OnEvent;
+        _eventHandlerRegistered = true;
+    }
+
+        /// <summary>
     /// Liest C.QES nach, damit der Hintergrund ueberhaupt bemerkt, dass qualifizierte
     /// Signaturen ins Leere laufen. Bewusst nicht jeder Poll: die Abfrage ist teuer, und ein
     /// Ablauf ist kein Vorgang, der alle fuenf Minuten passiert. Ein Versuch am Tag reicht, und
@@ -395,6 +450,7 @@ public sealed class ConnectorMonitor : IDisposable
         _subscriptionsAlive = false;
         _subscriptionAttempted = true;
         _events.EventReceived -= OnEvent;
+        _eventHandlerRegistered = false;
         _events.Dispose();
         LastEventNote = L("Alle Abos dieser App gekuendigt – die App pollt wieder.",
             "All subscriptions of this app cancelled – the app polls again.");
@@ -406,13 +462,7 @@ public sealed class ConnectorMonitor : IDisposable
     /// der Konnektor hat damit schon geantwortet, und ein Abo auf eine ihm fremde Version ist
     /// genau der Fall, der als Erfolg durchgeht, ohne dass je ein Ereignis ankommt.
     /// </summary>
-    private List<string> EventTopics()
-    {
-        var ns = ConnectorCapabilities.GetEventNamespace(_settingsProvider().Connector.Host)
-                 ?? ConnectorProtocol.DefaultEventServiceNs;
-        string[] names = ["CardInserted", "CardRemoved", "CardTerminalConnected", "CardTerminalDisconnected", "StatusChanged"];
-        return names.Select(name => ConnectorProtocol.EventTopic(ns, name)).ToList();
-    }
+    private static IReadOnlyList<string> EventTopics() => ConnectorTopics.DefaultSubscriptions;
 
     private void OnEvent(ConnectorEvent evt)
     {
@@ -430,11 +480,25 @@ public sealed class ConnectorMonitor : IDisposable
             return;
         _lastEventPoll = DateTime.Now;
 
+        var token = _cts?.Token ?? new CancellationToken(canceled: true);
+        if (token.IsCancellationRequested)
+            return;
         _ = Task.Run(async () =>
         {
-            var settings = _settingsProvider().Connector;
-            await PollOnceAsync(settings, CancellationToken.None);
-        });
+            try
+            {
+                var settings = _settingsProvider().Connector;
+                await PollOnceAsync(settings, token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Monitor wurde beendet.
+            }
+            catch
+            {
+                // Einzelner Ereignis-Poll darf den Listener nicht kippen.
+            }
+        }, token);
     }
 
     /// <summary>

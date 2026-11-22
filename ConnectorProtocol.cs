@@ -199,30 +199,22 @@ public static class ConnectorProtocol
     public static XElement Unsubscribe(XNamespace evt, ConnectorSettings s, string subscriptionId) =>
         new(evt + "Unsubscribe", Context(s), new XElement(evt + "SubscriptionID", subscriptionId.Trim()));
 
-    /// <summary>
-    /// Prueft, ob der aktuelle Aufrufkontext ueberhaupt fuer eine bestimmte Berechtigung offen
-    /// steht. Ohne AccessPrivilege ist das eine reine Leseabfrage ohne PIN-Beruehrung.
-    /// </summary>
-    public static XElement IsContextAvailable(XNamespace card, ConnectorSettings s, string? accessPrivilege = null)
+    /// <summary>Verlängert bestehende Abos (gemSpec_Kon RenewSubscriptions, TerminationTime typisch +25 h).</summary>
+    public static XElement RenewSubscriptions(XNamespace evt, ConnectorSettings s, IEnumerable<string> subscriptionIds)
     {
-        var element = new XElement(card + "IsContextAvailable", Context(s));
-        if (!string.IsNullOrWhiteSpace(accessPrivilege))
-            element.Add(new XElement(Conn + "AccessPrivilege", accessPrivilege.Trim()));
+        var element = new XElement(evt + "RenewSubscriptions", Context(s));
+        foreach (var id in subscriptionIds.Where(i => !string.IsNullOrWhiteSpace(i)))
+            element.Add(new XElement(evt + "SubscriptionID", id.Trim()));
         return element;
     }
 
-    /// <summary>
-    /// Prueft eine concrete Karte gegenueber einer Berechtigung. ACHTUNG: Je nach Firmware und
-    /// PIN-Status loest das eine Verifizierungsabfrage am Terminal aus – deshalb nie im Polling,
-    /// sondern nur auf ausdruecklichen Knopfdruck.
-    /// </summary>
-    public static XElement VerifyCard(XNamespace card, ConnectorSettings s, string cardHandle, string? accessPrivilege = null)
-    {
-        var element = new XElement(card + "VerifyCard", Context(s), new XElement(Conn + "CardHandle", cardHandle));
-        if (!string.IsNullOrWhiteSpace(accessPrivilege))
-            element.Add(new XElement(Conn + "AccessPrivilege", accessPrivilege.Trim()));
-        return element;
-    }
+    public static List<(string SubscriptionId, DateTime? TerminationTime)> ParseRenewals(XElement response) =>
+        Descendants(response, "SubscriptionRenewal")
+            .Select(e => (
+                Value(e, "SubscriptionID"),
+                Date(Value(e, "TerminationTime"))))
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Item1))
+            .ToList();
 
     public static XElement GetPinStatus(XNamespace card, ConnectorSettings s, string cardHandle, string pinType) =>
         new(card + "GetPinStatus", Context(s), new XElement(Conn + "CardHandle", cardHandle), new XElement(CardCmn + "PinTyp", pinType));
@@ -230,8 +222,9 @@ public static class ConnectorProtocol
     public static XElement PinOperation(XNamespace card, string operation, ConnectorSettings s, string cardHandle, string pinType, bool? setNewPin = null)
     {
         var element = new XElement(card + operation, Context(s), new XElement(Conn + "CardHandle", cardHandle), new XElement(CardCmn + "PinTyp", pinType));
+        // SetNewPin ist im CardService-Schema ein lokales Element (nicht CardServiceCommon).
         if (setNewPin.HasValue)
-            element.Add(new XElement(CardCmn + "SetNewPin", setNewPin.Value ? "true" : "false"));
+            element.Add(new XElement(card + "SetNewPin", setNewPin.Value ? "true" : "false"));
         return element;
     }
 
@@ -262,34 +255,53 @@ public static class ConnectorProtocol
     public static string? ValidateContextIds(ConnectorSettings s)
     {
         var problems = new List<string>();
-        CheckId("Mandant-ID", s.MandantId, problems);
-        CheckId("Clientsystem-ID", s.ClientSystemId, problems);
-        CheckId("Arbeitsplatz-ID", s.WorkplaceId, problems);
+        CheckIdLength("Mandant-ID", s.MandantId, problems, required: true);
+        CheckIdLength("Clientsystem-ID", s.ClientSystemId, problems, required: true);
+        CheckIdLength("Arbeitsplatz-ID", s.WorkplaceId, problems, required: true);
         if (!string.IsNullOrWhiteSpace(s.UserId))
-            CheckId("Benutzer-ID", s.UserId, problems);
+            CheckIdLength("Benutzer-ID", s.UserId, problems, required: false);
         return problems.Count == 0 ? null : string.Join(Environment.NewLine, problems);
     }
 
-    private static void CheckId(string label, string value, List<string> problems)
+    /// <summary>
+    /// Hinweise auf ungewöhnliche Zeichen (RISE akzeptiert oft nur A-Z, a-z, 0-9, - und _).
+    /// Das XSD (ConnectorCommon, maxLength 64) verbietet sie nicht – deshalb nur Warnung, kein Blockieren.
+    /// </summary>
+    public static string? WarnContextIds(ConnectorSettings s)
+    {
+        var warnings = new List<string>();
+        WarnUnusual("Mandant-ID", s.MandantId, warnings);
+        WarnUnusual("Clientsystem-ID", s.ClientSystemId, warnings);
+        WarnUnusual("Arbeitsplatz-ID", s.WorkplaceId, warnings);
+        if (!string.IsNullOrWhiteSpace(s.UserId))
+            WarnUnusual("Benutzer-ID", s.UserId, warnings);
+        return warnings.Count == 0 ? null : string.Join(Environment.NewLine, warnings);
+    }
+
+    private static void CheckIdLength(string label, string value, List<string> problems, bool required)
     {
         value ??= "";
         if (value.Length == 0)
         {
-            problems.Add($"{label}: leer gelassen – mindestens 1 Zeichen erforderlich.");
+            if (required)
+                problems.Add($"{label}: leer gelassen – mindestens 1 Zeichen erforderlich.");
             return;
         }
         if (value.Length > 64)
-        {
-            problems.Add($"{label}: {value.Length} Zeichen – erlaubt sind maximal 64.");
+            problems.Add($"{label}: {value.Length} Zeichen – laut ConnectorCommon.xsd sind maximal 64 erlaubt.");
+    }
+
+    private static void WarnUnusual(string label, string value, List<string> warnings)
+    {
+        value ??= "";
+        if (value.Length == 0)
             return;
-        }
-        var invalid = value.Where(c => !char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_')).Distinct().ToList();
-        if (invalid.Count == 0)
+        var unusual = value.Where(c => !char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_')).Distinct().ToList();
+        if (unusual.Count == 0)
             return;
-        problems.Add(
-            $"{label} \u201E{value}\u201C enthält verbotene Zeichen: {string.Join(" ", invalid.Select(DescribeChar))}.\n" +
-            "Erlaubt sind A-Z, a-z, 0-9, Bindestrich und Unterstrich (1–64 Zeichen),\n" +
-            "so wie die IDs in der Konnektor-Administration hinterlegt sind.");
+        warnings.Add(
+            $"{label} \u201E{value}\u201C enthält ungewöhnliche Zeichen: {string.Join(" ", unusual.Select(DescribeChar))}.\n" +
+            "Die gematik-XSD erlaubt sie (max. 64 Zeichen), einige Konnektoren (z. B. RISE) antworten darauf aber mit 4000 Syntaxfehler.");
     }
 
     private static string DescribeChar(char c) => c switch
@@ -604,27 +616,6 @@ public static class ConnectorProtocol
             Result = Value(response, "VerificationResult"),
             Roles = Descendants(response, "Role").Select(r => r.Value.Trim()).Where(r => r.Length > 0).ToList()
         };
-
-    /// <summary>
-    /// Liest die Antwort von IsContextAvailable bzw. VerifyCard. Beide liefern eine
-    /// Ergebniszeichenkette und eventuelle Rollen; IsContextAvailable kennent den booleschen
-    /// Wert zusaetzlich, VerifyCard nicht – deshalb wird beides eingelesen und der Aufrufer
-    /// wertet die Reihenfolge nach Vorrang aus.
-    /// </summary>
-    public static ConnectorAccessCheck ParseAccessCheck(XElement response)
-    {
-        var flag = Descendants(response, "IsContextAvailable").FirstOrDefault()?.Value;
-        return new ConnectorAccessCheck
-        {
-            Result = FirstNonEmpty(Value(response, "VerificationResult"), Value(response, "Result"), Value(response, "AccessCheckResult")),
-            IsAvailable = flag is null ? null : flag.Trim().Equals("true", StringComparison.OrdinalIgnoreCase),
-            Roles = Descendants(response, "Role").Select(r => r.Value.Trim()).Where(r => r.Length > 0).ToList()
-        };
-    }
-
-    // ------------------------------------------------------------------
-    // Zertifikate
-    // ------------------------------------------------------------------
 
     public static ConnectorCertificateInfo DescribeCertificate(string certRef, string base64)
     {

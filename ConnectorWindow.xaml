@@ -127,7 +127,7 @@
         <Style x:Key="NavStyle" TargetType="ListBox">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Focusable" Value="True"/>
             <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
             <Setter Property="ItemContainerStyle">
                 <Setter.Value>
@@ -188,6 +188,23 @@
             </Setter>
         </Style>
 
+
+        <Style x:Key="FluentIconStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+        </Style>
+        <Style x:Key="SkeletonBarStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource ChipBackground}"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Height" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+
             </Window.Resources>
 
     <Grid Margin="22,18,22,16">
@@ -229,7 +246,7 @@
                 </StackPanel>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button x:Name="RefreshButton" Click="Refresh_Click" Margin="0,0,8,0" Padding="14,8">
+                <Button x:Name="RefreshButton" Click="Refresh_Click" Margin="0,0,8,0" Padding="14,8" AutomationProperties.Name="Aktualisieren" IsDefault="False">
                     <StackPanel Orientation="Horizontal">
                         <Viewbox Width="14" Height="14" VerticalAlignment="Center" Margin="0,0,7,0">
                             <Canvas Width="24" Height="24">
@@ -242,6 +259,7 @@
                     </StackPanel>
                 </Button>
                 <Button x:Name="CopyReportButton" Click="CopyReport_Click" Padding="14,8"
+                        AutomationProperties.Name="Bericht"
                         ToolTip="Diagnosebericht in die Zwischenablage kopieren">
                     <StackPanel Orientation="Horizontal">
                         <Viewbox Width="14" Height="14" VerticalAlignment="Center" Margin="0,0,7,0">
@@ -308,7 +326,7 @@
         <!-- ==================== Seitenleiste + Inhalt ==================== -->
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="186"/>
+                <ColumnDefinition Width="208"/>
                 <ColumnDefinition Width="16"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
@@ -316,79 +334,54 @@
             <!-- Die Auswahl hier ist dieselbe Auswahl der Reiter, damit der bestehende
                  Code (Tabs.SelectedIndex, Tabs.SelectedItem) ohne Umbau weitertragt. -->
             <ListBox x:Name="Nav" Grid.Column="0" Style="{StaticResource NavStyle}"
-                     SelectionChanged="Nav_SelectionChanged">
-                <ListBoxItem x:Name="NavOverview">
+                     SelectionChanged="Nav_SelectionChanged"
+                     KeyboardNavigation.TabNavigation="Once"
+                     KeyboardNavigation.DirectionalNavigation="Contained"
+                     AutomationProperties.Name="Konnektor-Bereiche">
+                <ListBoxItem x:Name="NavOverview" AutomationProperties.Name="Übersicht">
                     <StackPanel Orientation="Horizontal">
-                        <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
-                            <Canvas Width="24" Height="24">
-                                <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      Data="M2,12 C5,6 19,6 22,12 C19,18 5,18 2,12 Z"/>
-                                <Path Fill="{DynamicResource TextMuted}" Data="M12,9 A3,3 0 1 1 12,15 A3,3 0 1 1 12,9 Z"/>
-                            </Canvas>
-                        </Viewbox>
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE80F;"/>
                         <TextBlock Text="Übersicht" VerticalAlignment="Center"/>
                     </StackPanel>
                 </ListBoxItem>
-                <ListBoxItem x:Name="NavCards">
+                <ListBoxItem x:Name="NavCards" AutomationProperties.Name="Karten">
                     <StackPanel Orientation="Horizontal">
-                        <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
-                            <Canvas Width="24" Height="24">
-                                <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      StrokeLineJoin="Round"
-                                      Data="M2,6 H22 V18 H2 Z M2,10 H22"/>
-                            </Canvas>
-                        </Viewbox>
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE8C7;"/>
                         <TextBlock Text="Karten" VerticalAlignment="Center"/>
                         <TextBlock x:Name="NavCardsCount" Text="" VerticalAlignment="Center"
-                                   Margin="0,0,0,0" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                   Margin="8,0,0,0" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
                     </StackPanel>
                 </ListBoxItem>
-                <ListBoxItem x:Name="NavTerminals">
+                <ListBoxItem x:Name="NavTerminals" AutomationProperties.Name="Terminals">
                     <StackPanel Orientation="Horizontal">
-                        <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
-                            <Canvas Width="24" Height="24">
-                                <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                      Data="M3,4 H21 V16 H3 Z M8,20 H16 M12,16 V20"/>
-                            </Canvas>
-                        </Viewbox>
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE7F4;"/>
                         <TextBlock Text="Terminals" VerticalAlignment="Center"/>
                         <TextBlock x:Name="NavTerminalsCount" Text="" VerticalAlignment="Center"
-                                   Margin="0,0,0,0" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                   Margin="8,0,0,0" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
                     </StackPanel>
                 </ListBoxItem>
-                <ListBoxItem x:Name="NavConnection">
+                <ListBoxItem x:Name="NavCertificates" AutomationProperties.Name="Zertifikate">
                     <StackPanel Orientation="Horizontal">
-                        <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
-                            <Canvas Width="24" Height="24">
-                                <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                      Data="M9,2 V8 M15,2 V8 M6,8 H18 V11 A6,6 0 0 1 6,11 Z M12,17 V22"/>
-                            </Canvas>
-                        </Viewbox>
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE8D7;"/>
+                        <TextBlock Text="Zertifikate" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </ListBoxItem>
+                <ListBoxItem x:Name="NavEvents" AutomationProperties.Name="Ereignisse">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE7C3;"/>
+                        <TextBlock Text="Ereignisse" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </ListBoxItem>
+                <ListBoxItem x:Name="NavDiagnostics" AutomationProperties.Name="Diagnose">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE90F;"/>
+                        <TextBlock Text="Diagnose" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </ListBoxItem>
+                <ListBoxItem x:Name="NavConnection" AutomationProperties.Name="Verbindung">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource FluentIconStyle}" Text="&#xE713;"/>
                         <TextBlock Text="Verbindung" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </ListBoxItem>
-                <ListBoxItem x:Name="NavServices">
-                    <StackPanel Orientation="Horizontal">
-                        <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
-                            <Canvas Width="24" Height="24">
-                                <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      Data="M12,3 A9,9 0 1 1 12,21 A9,9 0 1 1 12,3 Z M3,12 H21 M12,3 A14,14 0 0 1 12,21 M12,3 A14,14 0 0 0 12,21"/>
-                            </Canvas>
-                        </Viewbox>
-                        <TextBlock Text="Dienste" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </ListBoxItem>
-                <ListBoxItem x:Name="NavLog">
-                    <StackPanel Orientation="Horizontal">
-                        <Viewbox Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,9,0">
-                            <Canvas Width="24" Height="24">
-                                <Path Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
-                                      StrokeLineJoin="Round" Data="M4,3 H20 V21 H4 Z M8,8 H16 M8,12 H16 M8,16 H13"/>
-                            </Canvas>
-                        </Viewbox>
-                        <TextBlock Text="Protokoll" VerticalAlignment="Center"/>
                     </StackPanel>
                 </ListBoxItem>
             </ListBox>
@@ -500,6 +493,104 @@
                         </ScrollViewer>
                     </Border>
                 </Grid>
+            </TabItem>
+
+            <!-- ======================== Zertifikate ======================== -->
+            <TabItem Header="Zertifikate">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Border Style="{StaticResource PanelStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Zertifikate" Style="{StaticResource SectionTitleStyle}"/>
+                            <TextBlock Text="C.AUT, C.ENC, C.SIG und C.QES der gesteckten Karten. Ablaufdaten erscheinen farblich, bevor sie kritisch werden."
+                                       Style="{StaticResource SectionHintStyle}"/>
+                            <StackPanel x:Name="CertificatesPanel"/>
+                            <Border x:Name="CertificatesEmpty" Style="{StaticResource SubtlePanelStyle}" Visibility="Collapsed">
+                                <TextBlock Text="Keine Zertifikate gelesen. Karte wählen und „Alle Zertifikate lesen“ verwenden."
+                                           FontSize="13" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ======================== Ereignisse ======================== -->
+            <TabItem Header="Ereignisse">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <Border x:Name="EventsPresenceCard" Style="{StaticResource PanelStyle}">
+                            <StackPanel>
+                                <TextBlock Text="Live-Ereignisse" Style="{StaticResource SectionTitleStyle}"/>
+                                <TextBlock Text="Karte ein/aus und Terminals werden über CETP gemeldet, sobald ein Abo steht."
+                                           Style="{StaticResource SectionHintStyle}"/>
+                                <TextBlock x:Name="EventsPresenceSummary" FontSize="13" Foreground="{DynamicResource TextMain}" TextWrapping="Wrap"
+                                           Text="Noch keine Ereignisse empfangen."/>
+                            </StackPanel>
+                        </Border>
+                                <!-- Aktive Abos: die einzige Stelle, die zeigt, ob ueberhaupt
+                                     etwas abonniert ist. Steht hier nichts, kommt Karte
+                                     rein/raus erst beim naechsten Poll an – und das ist eine
+                                     Erklaerung, keine Vermutung. -->
+                                <Border Style="{StaticResource PanelStyle}">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="Ereignis-Abos" Style="{StaticResource SectionTitleStyle}" FontSize="14"/>
+                                                <TextBlock Text="Was der Konnektor derzeit an diese App meldet. Leere Liste heißt: es wird nur gepollt."
+                                                           Style="{StaticResource SectionHintStyle}"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" x:Name="UnsubscribeButton" Content="Abos dieser App kündigen"
+                                                    Padding="13,7" VerticalAlignment="Top" Margin="0,2,0,0"
+                                                    Click="Unsubscribe_Click"
+                                                    ToolTip="Entfernt alle Einträge, die auf diesem Rechner zeigen. Hilft, wenn derselbe Lauscher nach Fehlversuchen mehrfach steht."/>
+                                        </Grid>
+                                        <ItemsControl x:Name="SubscriptionsList" Margin="0,10,0,0"/>
+                                        <!-- Steht unter der Liste, nicht an ihrer Stelle: eine
+                                             gefuellte Liste, die niemandem zugeordnet ist, ist
+                                             der Fall, in dem "keine Abos" als Erklaerung zu
+                                             duenn und eine reine Aufzaehlung troestend waere. -->
+                                        <TextBlock x:Name="SubscriptionsStatus" FontSize="11" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ======================== Diagnose ======================== -->
+            <TabItem Header="Diagnose">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                    <Border x:Name="ServicesCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock Text="Dienstverzeichnis" Style="{StaticResource SectionTitleStyle}"/>
+                            <TextBlock Text="Aus connector.sds – Name, Version und Erreichbarkeit der angebotenen Dienste"
+                                       Style="{StaticResource SectionHintStyle}"/>
+                            <StackPanel x:Name="ServicesPanel"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource PanelStyle}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="Ablauf des letzten Abrufs"
+                                   Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,10"/>
+                        <TextBox x:Name="LogBox"
+                                 DockPanel.Dock="Bottom"
+                                 IsReadOnly="True"
+                                 TextWrapping="Wrap"
+                                 AcceptsReturn="True"
+                                 MinHeight="280"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas"
+                                 FontSize="11"/>
+                    </DockPanel>
+                    </Border>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
             <!-- ===================== Verbindung ===================== -->
@@ -710,37 +801,6 @@
                                     </StackPanel>
                                 </Border>
 
-                                <!-- Aktive Abos: die einzige Stelle, die zeigt, ob ueberhaupt
-                                     etwas abonniert ist. Steht hier nichts, kommt Karte
-                                     rein/raus erst beim naechsten Poll an – und das ist eine
-                                     Erklaerung, keine Vermutung. -->
-                                <Border Style="{StaticResource PanelStyle}">
-                                    <StackPanel>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel>
-                                                <TextBlock Text="Ereignis-Abos" Style="{StaticResource SectionTitleStyle}" FontSize="14"/>
-                                                <TextBlock Text="Was der Konnektor derzeit an diese App meldet. Leere Liste heißt: es wird nur gepollt."
-                                                           Style="{StaticResource SectionHintStyle}"/>
-                                            </StackPanel>
-                                            <Button Grid.Column="1" x:Name="UnsubscribeButton" Content="Abos dieser App kündigen"
-                                                    Padding="13,7" VerticalAlignment="Top" Margin="0,2,0,0"
-                                                    Click="Unsubscribe_Click"
-                                                    ToolTip="Entfernt alle Einträge, die auf diesem Rechner zeigen. Hilft, wenn derselbe Lauscher nach Fehlversuchen mehrfach steht."/>
-                                        </Grid>
-                                        <ItemsControl x:Name="SubscriptionsList" Margin="0,10,0,0"/>
-                                        <!-- Steht unter der Liste, nicht an ihrer Stelle: eine
-                                             gefuellte Liste, die niemandem zugeordnet ist, ist
-                                             der Fall, in dem "keine Abos" als Erklaerung zu
-                                             duenn und eine reine Aufzaehlung troestend waere. -->
-                                        <TextBlock x:Name="SubscriptionsStatus" FontSize="11" TextWrapping="Wrap"
-                                                   Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"/>
-                                    </StackPanel>
-                                </Border>
-
                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                     <Button x:Name="SaveConnectButton" Content="Speichern &amp; verbinden"
                                             Style="{StaticResource AccentButtonStyle}" Padding="18,10" Margin="0,0,8,0"
@@ -753,46 +813,32 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- ======================= Dienste ======================= -->
-            <TabItem Header="Dienste">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <Border x:Name="ServicesCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
-                        <StackPanel>
-                            <TextBlock Text="Dienstverzeichnis" Style="{StaticResource SectionTitleStyle}"/>
-                            <TextBlock Text="Aus connector.sds – Name, Version und Erreichbarkeit der angebotenen Dienste"
-                                       Style="{StaticResource SectionHintStyle}"/>
-                            <StackPanel x:Name="ServicesPanel"/>
-                        </StackPanel>
-                    </Border>
-                </ScrollViewer>
-            </TabItem>
-
-            <!-- ====================== Protokoll ====================== -->
-            <TabItem Header="Protokoll">
-                <Border Style="{StaticResource PanelStyle}">
-                    <DockPanel>
-                        <TextBlock DockPanel.Dock="Top" Text="Ablauf des letzten Abrufs"
-                                   Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,10"/>
-                        <TextBox x:Name="LogBox"
-                                 DockPanel.Dock="Bottom"
-                                 IsReadOnly="True"
-                                 TextWrapping="Wrap"
-                                 AcceptsReturn="True"
-                                 MinHeight="360"
-                                 VerticalScrollBarVisibility="Auto"
-                                 FontFamily="Consolas"
-                                 FontSize="11"/>
-                    </DockPanel>
-                </Border>
-            </TabItem>
             </TabControl>
         </Grid>
+
+
+        <Border x:Name="BusyOverlay" Grid.Row="0" Grid.RowSpan="4"
+                Visibility="Collapsed" Background="#66000000" Panel.ZIndex="20"
+                AutomationProperties.LiveSetting="Assertive">
+            <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Style="{StaticResource PanelStyle}" MinWidth="320" Margin="0" Padding="24">
+                <StackPanel>
+                    <TextBlock x:Name="BusyOverlayTitle" Text="Bitte warten …"
+                               Style="{StaticResource SectionTitleStyle}" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="BusyOverlayText" Text=""
+                               Style="{StaticResource SectionHintStyle}" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,8,0,14"/>
+                    <Border Style="{StaticResource SkeletonBarStyle}" Width="220"/>
+                    <Border Style="{StaticResource SkeletonBarStyle}" Width="180" HorizontalAlignment="Center"/>
+                    <Border Style="{StaticResource SkeletonBarStyle}" Width="200" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </Border>
 
         <!-- ============================ Fuß ============================ -->
         <Grid Grid.Row="3" Margin="0,12,0,0">
             <TextBlock x:Name="FooterText" Text="" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextMuted}" FontSize="12"/>
-            <Button Content="Schließen" HorizontalAlignment="Right" MinWidth="110" Click="Close_Click" Padding="16,9"/>
+            <Button Content="Schließen" HorizontalAlignment="Right" MinWidth="110" Click="Close_Click" Padding="16,9" AutomationProperties.Name="Schließen" IsCancel="True"/>
         </Grid>
     </Grid>
 </Window>

@@ -24,6 +24,14 @@
             <Setter Property="Margin" Value="0,0,0,12"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
         </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource ChipBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMain}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtle}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource TextMain}"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
         <Style x:Key="SettingsCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{DynamicResource CardBackground}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtle}"/>
@@ -184,6 +192,68 @@
                                    Foreground="{DynamicResource TextMuted}"
                                    Margin="0,0,0,6"/>
                         <WrapPanel x:Name="NotifyServicesPanel" Orientation="Horizontal"/>
+                    </StackPanel>
+                </Border>
+
+
+                <!-- Konnektor -->
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.11" Direction="270" Color="#000000"/>
+                    </Border.Effect>
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE968;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       FontSize="20" Foreground="{DynamicResource TextMain}"
+                                       VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Konnektor" Style="{StaticResource SectionHeaderStyle}"/>
+                                <TextBlock Text="Lokale TI-Anbindung: Überwachung, Ereignisse und Verlauf. Zugangsdaten bleiben im Konnektor-Fenster."
+                                           Style="{StaticResource SectionHintStyle}"/>
+                            </StackPanel>
+                        </Grid>
+                        <CheckBox x:Name="ConnectorEnabledToggle"
+                                  Content="Konnektor-Anbindung aktiv"
+                                  Style="{DynamicResource ThemeAwareCheckBoxStyle}"
+                                  Margin="0,0,0,8"
+                                  Checked="ConnectorSetting_Changed"
+                                  Unchecked="ConnectorSetting_Changed"/>
+                        <CheckBox x:Name="ConnectorMonitoringToggle"
+                                  Content="Im Hintergrund überwachen (Toasts)"
+                                  Style="{DynamicResource ThemeAwareCheckBoxStyle}"
+                                  Margin="0,0,0,8"
+                                  Checked="ConnectorSetting_Changed"
+                                  Unchecked="ConnectorSetting_Changed"/>
+                        <CheckBox x:Name="ConnectorEventsToggle"
+                                  Content="Ereignis-Abos (Karte rein/raus sofort)"
+                                  Style="{DynamicResource ThemeAwareCheckBoxStyle}"
+                                  Margin="0,0,0,8"
+                                  Checked="ConnectorSetting_Changed"
+                                  Unchecked="ConnectorSetting_Changed"/>
+                        <CheckBox x:Name="ConnectorHistoryToggle"
+                                  Content="Verlauf lokal speichern (14 Tage)"
+                                  Style="{DynamicResource ThemeAwareCheckBoxStyle}"
+                                  Margin="0,0,0,10"
+                                  Checked="ConnectorSetting_Changed"
+                                  Unchecked="ConnectorSetting_Changed"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                            <TextBlock Text="Intervall" FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox x:Name="ConnectorPollBox" Width="58" Padding="8,6" LostFocus="ConnectorPoll_LostFocus"/>
+                            <TextBlock Text="Min." FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="6,0,16,0"/>
+                            <TextBlock Text="Zertifikatswarnung ab" FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox x:Name="ConnectorWarnBox" Width="58" Padding="8,6" LostFocus="ConnectorPoll_LostFocus"/>
+                            <TextBlock Text="Tage" FontSize="12" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                        </StackPanel>
+                        <Button x:Name="OpenConnectorButton"
+                                Content="Konnektor-Fenster öffnen"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Left"
+                                Padding="16,9"
+                                Click="OpenConnector_Click"/>
                     </StackPanel>
                 </Border>
 

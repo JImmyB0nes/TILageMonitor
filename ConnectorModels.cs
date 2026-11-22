@@ -41,6 +41,10 @@ public sealed class ConnectorServiceDirectory
             digits += ".0";
         return Version.TryParse(digits, out var v) ? v : new Version(0, 0);
     }
+
+    /// <summary>EnablePin/DisablePin gibt es erst ab CardService v8.2 (api-telematik OPB5).</summary>
+    public bool SupportsEnableDisablePin =>
+        Find("CardService") is { } card && ParseVersion(card.Version) >= new Version(8, 2);
 }
 
 public sealed class ConnectorCardTerminal
@@ -204,19 +208,32 @@ public sealed class ConnectorCard
     public ConnectorCertificateInfo? ExpiredQesAt(DateTime now) =>
         Certificates.FirstOrDefault(c => c.RefEquals("C.QES") && c.NotAfter <= now);
 
-    public bool IsSmcB => CardType.Equals("SMC-B", StringComparison.OrdinalIgnoreCase);
-    public bool IsHba => CardType.Equals("HBA", StringComparison.OrdinalIgnoreCase) ||
-                         CardType.Equals("HBA-qSig", StringComparison.OrdinalIgnoreCase) ||
-                         CardType.Equals("HBAx", StringComparison.OrdinalIgnoreCase);
+    public bool IsSmcB =>
+        CardType.Equals("SMC-B", StringComparison.OrdinalIgnoreCase) ||
+        CardType.Equals("SM-B", StringComparison.OrdinalIgnoreCase) ||
+        CardType.Equals("HSM-B", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Moderner HBA (G2) inkl. Sammelbezeichner HBAx aus TAB_KON_500.</summary>
+    public bool IsHba =>
+        CardType.Equals("HBA", StringComparison.OrdinalIgnoreCase) ||
+        CardType.Equals("HBAx", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>HBA-Vorläufer (HBA-qSig, ZOD_2.0) – typischerweise nur PIN.QES.</summary>
+    public bool IsHbaPredecessor =>
+        CardType.Equals("HBA-qSig", StringComparison.OrdinalIgnoreCase) ||
+        CardType.Equals("ZOD_2.0", StringComparison.OrdinalIgnoreCase) ||
+        CardType.Equals("HBA-VK", StringComparison.OrdinalIgnoreCase);
+
     public bool IsEgk => CardType.Equals("EGK", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Institutions- und Heilberufsausweise unterstützen PIN-Verwaltung über den Konnektor.</summary>
-    public bool SupportsPinManagement => IsSmcB || IsHba;
+    public bool SupportsPinManagement => IsSmcB || IsHba || IsHbaPredecessor;
 
     /// <summary>PIN-Typen nach gemSpec_Kon (PinTyp) für diese Karte.</summary>
     public IReadOnlyList<string> PinTypes =>
         IsSmcB ? ["PIN.SMC"]
         : IsHba ? ["PIN.CH", "PIN.QES"]
+        : IsHbaPredecessor ? ["PIN.QES"]
         : [];
 
     public string DisplayName
@@ -225,7 +242,7 @@ public sealed class ConnectorCard
         {
             var type = CardType switch
             {
-                "SMC-B" => "SMC-B",
+                "SMC-B" or "SM-B" => "SMC-B",
                 "HBA" or "HBAx" or "HBA-qSig" => "HBA",
                 "EGK" => "eGK",
                 "SMC-KT" => "gSMC-KT",
@@ -293,6 +310,10 @@ public sealed class ConnectorResourceInfo
     public bool? IsTiOnline => VpnTiStatus is null
         ? null
         : VpnTiStatus.Equals("Online", StringComparison.OrdinalIgnoreCase);
+
+    public bool? IsSisOnline => VpnSisStatus is null
+        ? null
+        : VpnSisStatus.Equals("Online", StringComparison.OrdinalIgnoreCase);
 
     public IEnumerable<ConnectorErrorState> ActiveErrors => ErrorStates.Where(e => e.Value);
 }

@@ -283,13 +283,11 @@ public partial class ConnectorWindow : Window
             return;
         try
         {
-            var (cert, bag) = ConnectorClient.LoadClientCertificate(s.ClientCertificatePath, SecretProtector.Unprotect(s.ClientCertificatePasswordProtected));
-            ClientCertInfo.Text = L($"Zertifikat: {cert.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false)} · gültig bis {cert.NotAfter:dd.MM.yyyy}",
-                                    $"Certificate: {cert.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false)} · valid until {cert.NotAfter:yyyy-MM-dd}");
+            var cert = ConnectorClient.LoadClientCertificate(s.ClientCertificatePath, SecretProtector.Unprotect(s.ClientCertificatePasswordProtected));
+            ClientCertInfo.Text = L($"Zertifikat: {cert.Subject} · gültig bis {cert.NotAfter:dd.MM.yyyy}",
+                                    $"Certificate: {cert.Subject} · valid until {cert.NotAfter:yyyy-MM-dd}");
             if (cert.NotAfter < DateTime.Now.AddDays(30))
                 ClientCertInfo.Text += L("  ⚠ läuft bald ab", "  ⚠ expires soon");
-            foreach (var c in bag)
-                c.Dispose();
         }
         catch (Exception ex)
         {
@@ -317,6 +315,14 @@ public partial class ConnectorWindow : Window
         Log(L("Gepinntes Konnektor-Zertifikat entfernt.", "Pinned connector certificate removed."));
     }
 
+
+    private void NoteContextWarnings(ConnectorSettings s)
+    {
+        var warn = ConnectorProtocol.WarnContextIds(s);
+        if (warn is not null)
+            Log(L("Hinweis zu den Kontext-IDs (nicht blockierend): ", "Note on context IDs (not blocking): ") + warn);
+    }
+
     private async void SaveConnect_Click(object sender, RoutedEventArgs e)
     {
         var s = ReadForm();
@@ -326,6 +332,7 @@ public partial class ConnectorWindow : Window
             ShowWarning(error);
             return;
         }
+        NoteContextWarnings(s);
         Persist(s);
         UpdateClientCertInfo(s);
         if (await LoadSnapshotAsync(s, interactive: true))
@@ -346,6 +353,7 @@ public partial class ConnectorWindow : Window
             ShowWarning(error);
             return;
         }
+        NoteContextWarnings(s);
         UpdateClientCertInfo(s);
         await LoadSnapshotAsync(s, interactive: true, persistTrustOnly: true);
     }
@@ -446,16 +454,89 @@ public partial class ConnectorWindow : Window
 
     private bool AskTrust(ConnectorUntrustedServerException ex)
     {
-        var text = L(
-            "Der Konnektor verwendet ein TLS-Zertifikat, dem Windows nicht vertraut (bei Konnektoren üblich, da es aus der TI-PKI stammt).\n\n" +
-            $"Zertifikat: {ex.Subject}\nGültig bis: {ex.NotAfter:dd.MM.yyyy}\nSHA-256:\n{FormatThumbprint(ex.Thumbprint)}\n\n" +
-            "Vergleichen Sie den Fingerprint mit der Anzeige in der Konnektor-Administration. Soll diesem Zertifikat dauerhaft vertraut werden?",
-            "The connector uses a TLS certificate that Windows does not trust (common for connectors because it is issued by the TI PKI).\n\n" +
-            $"Certificate: {ex.Subject}\nValid until: {ex.NotAfter:yyyy-MM-dd}\nSHA-256:\n{FormatThumbprint(ex.Thumbprint)}\n\n" +
-            "Compare the fingerprint with the connector administration. Trust this certificate permanently?");
-        return System.Windows.MessageBox.Show(this, text, L("Konnektor-Zertifikat bestätigen", "Confirm connector certificate"),
-            MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
+        var dialog = new Window
+        {
+            Title = L("Konnektor-Zertifikat bestätigen", "Confirm connector certificate"),
+            Width = 520,
+            Height = 460,
+            MinWidth = 440,
+            MinHeight = 360,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            Background = Brush("WindowBackground"),
+        };
+        var root = new StackPanel { Margin = new Thickness(24, 20, 24, 20) };
+        var icon = new TextBlock
+        {
+            Text = "\uE72E",
+            FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+            FontSize = 28,
+            Foreground = Brush("TextMain"),
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        root.Children.Add(icon);
+        root.Children.Add(new TextBlock
+        {
+            Text = L("Dieses TLS-Zertifikat wird vom Konnektor vorgelegt. Vergleichen Sie den Fingerprint mit der Konnektor-Administration.",
+                     "The connector is presenting this TLS certificate. Compare the fingerprint with the connector administration."),
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brush("TextMain"),
+            Margin = new Thickness(0, 0, 0, 16)
+        });
+        var card = new Border
+        {
+            Background = Brush("ChipBackground"),
+            BorderBrush = Brush("BorderSubtle"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(16, 14, 16, 14),
+            Margin = new Thickness(0, 0, 0, 18)
+        };
+        var info = new StackPanel();
+        void AddRow(string label, string value, bool mono = false)
+        {
+            info.Children.Add(new TextBlock { Text = label, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextMuted"), Margin = new Thickness(0, 0, 0, 2) });
+            info.Children.Add(new TextBlock
+            {
+                Text = value,
+                FontSize = 13,
+                FontFamily = new System.Windows.Media.FontFamily(mono ? "Consolas, Cascadia Mono" : "Segoe UI Variable, Segoe UI"),
+                Foreground = Brush("TextMain"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+        }
+        AddRow(L("Zertifikat", "Certificate"), ex.Subject ?? "");
+        AddRow(L("Gültig bis", "Valid until"), ex.NotAfter.ToString("dd.MM.yyyy", LocalizationService.DisplayCulture));
+        AddRow("SHA-256", FormatThumbprint(ex.Thumbprint), mono: true);
+        card.Child = info;
+        root.Children.Add(card);
+        root.Children.Add(new TextBlock
+        {
+            Text = L("Diesem Zertifikat dauerhaft vertrauen?", "Trust this certificate permanently?"),
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMain"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 16)
+        });
+        var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
+        var no = new System.Windows.Controls.Button { Content = L("Abbrechen", "Cancel"), Padding = new Thickness(16, 8, 16, 8), MinWidth = 110, IsCancel = true, Margin = new Thickness(0, 0, 8, 0) };
+        var yes = new System.Windows.Controls.Button { Content = L("Vertrauen", "Trust"), Padding = new Thickness(16, 8, 16, 8), MinWidth = 110, IsDefault = true, Style = (Style)FindResource("AccentButtonStyle") };
+        var accepted = false;
+        yes.Click += (_, _) => { accepted = true; dialog.Close(); };
+        no.Click += (_, _) => dialog.Close();
+        buttons.Children.Add(no);
+        buttons.Children.Add(yes);
+        root.Children.Add(buttons);
+        dialog.Content = new ScrollViewer { Content = root, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        dialog.ShowDialog();
+        return accepted;
     }
+
 
     private static string DescribeException(Exception ex)
     {
@@ -520,11 +601,13 @@ public partial class ConnectorWindow : Window
 
         // Kennzahlen direkt im Banner, damit sie nicht als Textkoloss unter dem Titel untergehen.
         StatusChips.Children.Clear();
-        StatusChips.Children.Add(Kpi(L("TI-Status", "TI status"), tiState,
-            snapshot.Resource?.IsTiOnline == true ? "StatusOk" : snapshot.Resource?.IsTiOnline == false ? "StatusOutage" : null));
+        StatusChips.Children.Add(AmpelChip(L("Erreichbar", "Reachable"), true));
+        StatusChips.Children.Add(AmpelChip(L("VPN TI", "VPN TI"), snapshot.Resource?.IsTiOnline));
+        StatusChips.Children.Add(AmpelChip(L("VPN SIS", "VPN SIS"), snapshot.Resource?.IsSisOnline));
+        var live = _ownerMain.ConnectorMonitor.SubscriptionsAlive && _ownerMain.ConnectorMonitor.EventStreamActive;
+        StatusChips.Children.Add(AmpelChip(L("Live-Ereignisse", "Live events"), live));
         StatusChips.Children.Add(Kpi(L("Karten", "Cards"), snapshot.Cards.Count.ToString()));
         StatusChips.Children.Add(Kpi(L("Terminals", "Terminals"), snapshot.Terminals.Count.ToString()));
-        StatusChips.Children.Add(Kpi(L("Abruf", "Retrieved"), snapshot.RetrievedAt.ToString("HH:mm:ss")));
 
         UpdateNavCounts(snapshot);
         RenderAlerts(alerts, snapshot.Warnings);
@@ -534,6 +617,8 @@ public partial class ConnectorWindow : Window
         RenderCards(snapshot);
         RenderTerminals(snapshot);
         RenderServices(snapshot);
+        RenderCertificates(snapshot);
+        RenderEventsSummary();
         FooterText.Text = L($"Letzter Abruf: {snapshot.RetrievedAt:dd.MM.yyyy HH:mm:ss}", $"Last retrieved: {snapshot.RetrievedAt:yyyy-MM-dd HH:mm:ss}");
     }
 
@@ -551,6 +636,25 @@ public partial class ConnectorWindow : Window
     /// Kennzahl im Banner: winzige Bezeichnung, darunter der Wert. So ist der Zustand auf
     /// einen Blick lesbar, ohne dass vier gleich garte Kapseln aneinandergeklebt wirken.
     /// </summary>
+    private Border AmpelChip(string label, bool? ok)
+    {
+        var color = ok is true ? "StatusOk" : ok is false ? "StatusOutage" : "StatusEmpty";
+        var value = ok is true ? L("ja", "yes") : ok is false ? L("nein", "no") : L("unbekannt", "unknown");
+        var chip = Kpi(label, value, color);
+        var dot = new Border
+        {
+            Width = 8,
+            Height = 8,
+            CornerRadius = new CornerRadius(4),
+            Background = Brush(color),
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        if (chip.Child is System.Windows.Controls.Panel panel)
+            panel.Children.Insert(0, dot);
+        return chip;
+    }
+
     private Border Kpi(string label, string value, string? colorKey = null)
     {
         var panel = new StackPanel();
@@ -936,6 +1040,82 @@ public partial class ConnectorWindow : Window
         card.IsSmcB ? "SMC-B" : card.IsHba ? "HBA" : card.IsEgk ? "eGK"
         : string.IsNullOrWhiteSpace(card.CardType) ? "KARTE" : card.CardType;
 
+
+    private void RenderCertificates(ConnectorSnapshot snapshot)
+    {
+        if (CertificatesPanel is null)
+            return;
+        CertificatesPanel.Children.Clear();
+        var days = _ownerMain.GetSettingsSnapshot().Connector.CertificateWarningDays;
+        var now = DateTime.Now;
+        var any = false;
+        foreach (var card in CardOrder(snapshot.Cards))
+        {
+            foreach (var cert in card.Certificates)
+            {
+                any = true;
+                var left = (cert.NotAfter - now).TotalDays;
+                var color = left <= 0 ? "StatusOutage" : left <= days ? "StatusPartial" : "StatusOk";
+                var tile = new Border
+                {
+                    Style = (Style)FindResource("SubtlePanelStyle"),
+                    Margin = new Thickness(0, 0, 0, 10)
+                };
+                var body = new StackPanel();
+                var head = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+                head.Children.Add(new TextBlock
+                {
+                    Text = "\uE8D7",
+                    FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                    FontSize = 16,
+                    Foreground = Brush(color),
+                    Margin = new Thickness(0, 0, 10, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                head.Children.Add(new TextBlock
+                {
+                    Text = $"{card.DisplayName} · {cert.CertRef}",
+                    FontSize = 13,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = Brush("TextMain"),
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                body.Children.Add(head);
+                body.Children.Add(new TextBlock
+                {
+                    Text = L($"gültig bis {cert.NotAfter:dd.MM.yyyy}", $"valid until {cert.NotAfter:yyyy-MM-dd}")
+                           + (left <= 0 ? L("  · abgelaufen", "  · expired") : left <= days ? L($"  · noch {Math.Max(0, (int)left)} Tage", $"  · {Math.Max(0, (int)left)} days left") : ""),
+                    FontSize = 12,
+                    Foreground = Brush("TextMuted"),
+                    Margin = new Thickness(26, 4, 0, 6)
+                });
+                var barBg = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush("ChipBackground") };
+                var pct = Math.Clamp(left / 365.0, 0, 1);
+                var bar = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush(color), Width = Math.Max(4, 220 * pct), HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
+                barBg.Child = bar;
+                body.Children.Add(barBg);
+                tile.Child = body;
+                CertificatesPanel.Children.Add(tile);
+            }
+        }
+        if (CertificatesEmpty is not null)
+            CertificatesEmpty.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void RenderEventsSummary()
+    {
+        if (EventsPresenceSummary is null)
+            return;
+        var monitor = _ownerMain.ConnectorMonitor;
+        var presence = monitor.LastPresence ?? (_snapshot is not null ? ConnectorPresence.FromSnapshot(_snapshot) : null);
+        if (presence is not null)
+            EventsPresenceSummary.Text = $"{presence.Glyph(DateTime.Now)}  {presence.StateText}  {presence.DetailText}  ·  {presence.AgeText(DateTime.Now)}"
+                + (string.IsNullOrWhiteSpace(monitor.LastEventNote) ? "" : "\n" + monitor.LastEventNote);
+        else
+            EventsPresenceSummary.Text = monitor.LastEventNote
+                ?? L("Noch keine Ereignisse empfangen.", "No events received yet.");
+    }
+
     private void RenderCards(ConnectorSnapshot snapshot)
     {
         // IndexTerminals statt ToDictionary: meldet der Konnektor dieselbe CtId zweimal,
@@ -1006,13 +1186,39 @@ public partial class ConnectorWindow : Window
         body.Children.Add(line);
 
         var ctLabel = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
-        body.Children.Add(new TextBlock
+        var meta = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+        meta.Children.Add(new TextBlock
         {
             Text = $"{ctLabel} · Slot {card.SlotId}",
             FontSize = 11,
             Foreground = Brush("TextMuted"),
-            Margin = new Thickness(0, 2, 0, 0)
+            VerticalAlignment = VerticalAlignment.Center
         });
+        if (!string.IsNullOrWhiteSpace(worstPin))
+        {
+            var pinBadge = Badge(worstPin, StateColorKey(worstPin));
+            pinBadge.Margin = new Thickness(8, 0, 0, 0);
+            meta.Children.Add(pinBadge);
+        }
+        body.Children.Add(meta);
+        var expiry = card.CertificateExpirationDate
+                     ?? card.Certificates.Select(c => (DateTime?)c.NotAfter).DefaultIfEmpty().Min();
+        if (expiry is DateTime until)
+        {
+            var daysLeft = (until - DateTime.Now).TotalDays;
+            var warn = _ownerMain.GetSettingsSnapshot().Connector.CertificateWarningDays;
+            var color = daysLeft <= 0 ? "StatusOutage" : daysLeft <= warn ? "StatusPartial" : "StatusOk";
+            var track = new Border { Height = 4, CornerRadius = new CornerRadius(2), Background = Brush("ChipBackground"), Margin = new Thickness(0, 6, 0, 0) };
+            track.Child = new Border
+            {
+                Height = 4,
+                CornerRadius = new CornerRadius(2),
+                Background = Brush(color),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                Width = Math.Max(4, 140 * Math.Clamp(daysLeft / 365.0, 0, 1))
+            };
+            body.Children.Add(track);
+        }
 
         Grid.SetColumn(body, 1);
         grid.Children.Add(body);
@@ -1152,10 +1358,6 @@ public partial class ConnectorWindow : Window
                 actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card)));
             actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card)));
             actions.Children.Add(ActionButton(L("PIN-Status neu lesen", "Re-read PIN status"), async () => await RefreshPinStatusAsync(card)));
-            // Freigabepruefung nur auf Knopfdruck: VerifyCard kann je nach Firmware eine
-            // PIN-Abfrage am Terminal ausloesen, was im Hintergrundpolling unangenehme
-            // Folgen haette (Terminal sperrt sich, wenn jemand die PIN nicht kennt).
-            actions.Children.Add(ActionButton(L("Freigabe prüfen (VSDM)", "Check access (VSDM)"), async () => await CheckAccessAsync(card)));
             CardDetailPanel.Children.Add(actions);
         }
 
@@ -1306,7 +1508,8 @@ public partial class ConnectorWindow : Window
         // An-/Abschalten ist von den übrigen Knöpfen zu trennen: DisablePin setzt die PIN nicht neu,
         // sondern nimmt ihre Prüfung ganz. Wer das versehentlich klickt, entsperrt die Karte,
         // ohne dass überhaupt noch eine PIN-Abfrage kommt.
-        if (!blocked && !transport && state is not null)
+        // EnablePin/DisablePin existieren erst ab CardService 8.2 (OPB5).
+        if (!blocked && !transport && state is not null && _snapshot?.Directory?.SupportsEnableDisablePin == true)
         {
             if (state.IsDisabled)
                 buttons.Children.Add(ActionButton(L("PIN aktivieren", "Enable PIN"), async () => await PinActionAsync(card, pinType, "EnablePin")));
@@ -1376,14 +1579,27 @@ public partial class ConnectorWindow : Window
         grid.Children.Add(edge);
 
         var body = new StackPanel { Margin = new Thickness(11, 2, 0, 2) };
-        body.Children.Add(new TextBlock
+        var title = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        title.Children.Add(new Border
+        {
+            Width = 9,
+            Height = 9,
+            CornerRadius = new CornerRadius(5),
+            Background = Brush(t.Connected == false ? "StatusOutage" : t.Connected == true ? "StatusOk" : "StatusEmpty"),
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = t.Connected == false ? L("offline", "offline") : t.Connected == true ? L("online", "online") : L("unbekannt", "unknown")
+        });
+        title.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(t.Name) ? t.CtId : t.Name,
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Foreground = Brush("TextMain"),
-            TextTrimming = TextTrimming.CharacterEllipsis
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
         });
+        body.Children.Add(title);
         var under = new List<string> { t.CtId };
         if (!string.IsNullOrWhiteSpace(t.IpAddress)) under.Add(t.IpAddress);
         var here = snapshot.Cards.Count(c => string.Equals(c.CtId, t.CtId, StringComparison.OrdinalIgnoreCase));
@@ -1629,6 +1845,13 @@ public partial class ConnectorWindow : Window
         var where = terminal is null || string.IsNullOrWhiteSpace(terminal.Name) ? card.CtId : terminal.Name;
         bool? setNewPin = null;
 
+        if ((operation is "EnablePin" or "DisablePin") && _snapshot?.Directory?.SupportsEnableDisablePin != true)
+        {
+            ShowWarning(L("Aktivieren und Deaktivieren der PIN unterstützt dieser Konnektor nicht (CardService unter 8.2).",
+                          "Enabling and disabling the PIN is not supported by this connector (CardService below 8.2)."));
+            return;
+        }
+
         string prompt;
         switch (operation)
         {
@@ -1765,62 +1988,6 @@ public partial class ConnectorWindow : Window
         var current = _ownerMain.ConnectorMonitor.LastSnapshot;
         if (current is null || current.RetrievedAt <= _snapshot.RetrievedAt)
             _ownerMain.ConnectorMonitor.Accept(_snapshot);
-    }
-
-    /// <summary>
-    /// Fragt den Konnektor, ob fuer diese Karte die Berechtigung VSDM vorliegt. Zuerst wird
-    /// IsContextAvailable gelesen (unschaedlich); liefert der Konnektor dazu nichts, wird auf
-    /// VerifyCard umgestiegen – das kann dann aber eine PIN-Abfrage am Terminal ausloesen.
-    /// </summary>
-    private async Task CheckAccessAsync(ConnectorCard card)
-    {
-        SetBusy(true, L("Prüfe Freigabe …", "Checking access …"));
-        try
-        {
-            using var client = CreateClient();
-            ConnectorAccessCheck check;
-            var via = L("IsContextAvailable", "IsContextAvailable");
-            try
-            {
-                check = await client.IsContextAvailableAsync("VSDM", CancellationToken.None);
-                if (check.Granted is null && check.Roles.Count == 0)
-                {
-                    via = L("VerifyCard", "VerifyCard");
-                    check = await client.VerifyCardAsync(card.CardHandle, "VSDM", CancellationToken.None);
-                }
-            }
-            catch (ConnectorFaultException)
-            {
-                via = L("VerifyCard", "VerifyCard");
-                check = await client.VerifyCardAsync(card.CardHandle, "VSDM", CancellationToken.None);
-            }
-
-            var text = check.Granted switch
-            {
-                true => L("VSDM-Freigabe liegt vor ✓", "VSDM access is granted ✓"),
-                false => L("VSDM-Freigabe NICHT erteilt – die Karte darf fuer VSDM nicht verwendet werden.", "VSDM access is NOT granted – the card must not be used for VSDM."),
-                _ => L("Der Konnektor aeussert sich nicht eindeutig zur Freigabe.", "The connector does not give a clear answer about the access.")
-            };
-            if (!string.IsNullOrWhiteSpace(check.Result))
-                text += "\n" + L("Ergebnis: ", "Result: ") + check.Result;
-            if (check.Roles.Count > 0)
-                text += "\n" + L("Rollen: ", "Roles: ") + string.Join(", ", check.Roles);
-            text += "\n\n" + L("Quelle: ", "Source: ") + via;
-
-            Log($"{card.DisplayName}: VSDM-Freigabe {check.Granted?.ToString() ?? "unbestimmt"} ({via})");
-            System.Windows.MessageBox.Show(this, $"{card.DisplayName}\n\n{text}",
-                L("Freigabe-Prüfung", "Access check"), MessageBoxButton.OK,
-                check.Granted == true ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        }
-        catch (Exception ex)
-        {
-            Log("✖ " + ex.Message);
-            ShowWarning(DescribeException(ex));
-        }
-        finally
-        {
-            SetBusy(false);
-        }
     }
 
     /// <summary>
@@ -2038,6 +2205,15 @@ public partial class ConnectorWindow : Window
             _themeRefreshQueued = false;
             if (_snapshot is not null)
                 Render(_snapshot);
+        }
+        if (BusyOverlay is not null)
+        {
+            BusyOverlay.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+            if (busy)
+            {
+                BusyOverlayTitle.Text = L("Bitte warten …", "Please wait …");
+                BusyOverlayText.Text = text ?? L("Der Konnektor wird abgefragt.", "The connector is being queried.");
+            }
         }
         if (text is not null)
             FooterText.Text = text;

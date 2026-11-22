@@ -83,6 +83,46 @@
 
         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
+                <Border x:Name="ConnectorStatusCard"
+                        Background="{DynamicResource CardBackground}"
+                        BorderBrush="{DynamicResource BorderSubtle}"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="20"
+                        Margin="0,0,0,16"
+                        Cursor="Hand"
+                        Focusable="True"
+                        KeyboardNavigation.IsTabStop="True"
+                        AutomationProperties.Name="Konnektor"
+                        MouseLeftButtonUp="ConnectorCard_MouseUp"
+                        KeyDown="ConnectorCard_KeyDown">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.10" Direction="270" Color="#000000"/>
+                    </Border.Effect>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border x:Name="ConnectorCardIcon" Width="44" Height="44" CornerRadius="14"
+                                Background="{DynamicResource AppIconCircleBackground}" VerticalAlignment="Top" Margin="0,0,16,0">
+                            <TextBlock Text="&#xE968;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       FontSize="18" Foreground="{DynamicResource AppIconForeground}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock x:Name="ConnectorCardTitle" Text="Konnektor" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource TextMain}"/>
+                            <TextBlock x:Name="ConnectorCardDetail" Text="Lokale TI-Anbindung einrichten und auslesen"
+                                       FontSize="12" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,3,0,10"/>
+                            <WrapPanel x:Name="ConnectorCardChips"/>
+                        </StackPanel>
+                        <Button Grid.Column="2" x:Name="ConnectorCardOpenButton" Content="Öffnen"
+                                VerticalAlignment="Center" Margin="16,0,0,0" Padding="16,8"
+                                Click="Connector_Click" AutomationProperties.Name="Konnektor öffnen"/>
+                    </Grid>
+                </Border>
+
                 <Border Background="{DynamicResource CardBackground}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1" CornerRadius="16" Padding="20" Margin="0,0,0,16">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.10" Direction="270" Color="#000000"/>

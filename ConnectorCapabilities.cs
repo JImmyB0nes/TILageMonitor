@@ -16,6 +16,7 @@ public static class ConnectorCapabilities
 {
     private static readonly ConcurrentDictionary<string, bool> MandantWide = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, string> EventNamespaces = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, bool> OmitUserId = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Versuchsfolge für den Mandanten-Radius. Ist nichts bekannt, zuerst der Radius, weil er
@@ -40,12 +41,19 @@ public static class ConnectorCapabilities
             EventNamespaces[host ?? ""] = value.Trim();
     }
 
+    /// <summary>Dieser Konnektor lehnt die hinterlegte Benutzer-ID mit 4000 ab – sie wird weggelassen.</summary>
+    public static bool? GetOmitUserId(string host) =>
+        OmitUserId.TryGetValue(host ?? "", out var omit) ? omit : null;
+
+    public static void SetOmitUserId(string host, bool value) => OmitUserId[host ?? ""] = value;
+
     /// <summary>Alles, was über diese Adresse bekannt ist. Nach einem Umbau des Mandanten die
     /// saubere Rücksetzung, statt die App mit einer alten Vermutung laufen zu lassen.</summary>
     public static void Forget(string host)
     {
         MandantWide.TryRemove(host ?? "", out _);
         EventNamespaces.TryRemove(host ?? "", out _);
+        OmitUserId.TryRemove(host ?? "", out _);
     }
 
 }

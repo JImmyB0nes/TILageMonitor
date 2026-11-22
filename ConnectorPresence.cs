@@ -29,11 +29,13 @@ public sealed class ConnectorPresence
         if (evt is null)
             return null;
 
-        var name = TopicName(evt.Topic);
-        var inserted = name switch
+        var inserted = evt.Topic switch
         {
-            "CardInserted" => true,
-            "CardRemoved" => false,
+            _ when ConnectorTopics.IsCardInserted(evt.Topic) => true,
+            _ when ConnectorTopics.IsCardRemoved(evt.Topic) => false,
+            // Ältere Firmware oder Test-Topics mit Namespace#Name
+            _ when TopicName(evt.Topic) is "CardInserted" => true,
+            _ when TopicName(evt.Topic) is "CardRemoved" => false,
             _ => (bool?)null
         };
         if (inserted is null)
