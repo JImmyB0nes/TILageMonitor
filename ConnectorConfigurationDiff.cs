@@ -98,15 +98,13 @@ public static class ConnectorConfigurationDiff
             }
         }
 
+        // Nur die Konfiguration, nicht der Betriebszustand: ob ein Terminal gerade verbunden ist
+        // oder welche Karte steckt, melden Ereignisse und Warnungen. Frueher landeten hier auch
+        // eGK-ICCSNs – jede Versichertenkarte erzeugte dann einen "Konfiguration geaendert"-Toast
+        // und ihre Seriennummer lag dauerhaft auf der Platte.
         foreach (var terminal in snapshot.Terminals.OrderBy(t => t.CtId, StringComparer.Ordinal))
         {
-            Add(lines, "terminal", $"{terminal.CtId}={terminal.Label}|{terminal.Details}|" +
-                                   $"{(terminal.Connected == true ? "verbunden" : terminal.Connected == false ? "getrennt" : "unbekannt")}");
-        }
-
-        foreach (var card in snapshot.Cards.OrderBy(c => c.Iccsn, StringComparer.Ordinal).ThenBy(c => c.CardType, StringComparer.Ordinal))
-        {
-            Add(lines, "karte", $"{card.Iccsn}={card.CardType}|{card.CtId}/{card.SlotId}");
+            Add(lines, "terminal", $"{terminal.CtId}={terminal.Label}|{terminal.Details}");
         }
 
         return lines;
@@ -119,9 +117,26 @@ public static class ConnectorConfigurationDiff
     /// </summary>
     public static IReadOnlyList<string> CompareAndRemember(ConnectorSnapshot snapshot)
     {
+        // Ohne Verzeichnisdienst (connector.sds) fehlt die Grundlage – nichts vergleichen,
+        // sonst erschiene jede Dienstzeile als "entfallen".
+        if (snapshot.Directory is null)
+            return [];
+
         var current = Describe(snapshot);
         var previous = Load();
-        var diff = Diff(previous?.Lines ?? [], current);
+
+        // Teilabruf: Terminalliste nicht geladen – den alten Stand fortschreiben statt alle
+        // Terminals als entfernt zu melden.
+        if (snapshot.Warnings.Any(w => w.Contains("GetCardTerminals", StringComparison.OrdinalIgnoreCase)) && previous is not null)
+        {
+            current.RemoveAll(l => l.StartsWith("terminal:", StringComparison.Ordinal));
+            current.AddRange(previous.Lines.Where(l => l.StartsWith("terminal:", StringComparison.Ordinal)));
+        }
+
+        // Alte Staende (bis 3.1.1) fuehrten Karten und den Verbindungsstatus – beides wird nicht
+        // mehr verglichen und darf nach dem Update keine Meldung ausloesen.
+        var before = previous?.Lines.Where(IsTracked).Select(Normalize).ToList() ?? [];
+        var diff = Diff(before, current);
 
         Save(new State
         {
@@ -151,7 +166,7 @@ public static class ConnectorConfigurationDiff
         foreach (var key in beforeKeys.Keys.OrderBy(k => k, StringComparer.Ordinal))
         {
             if (!afterKeys.ContainsKey(key))
-                changes.Add($"- {key}: entfallen");
+                changes.Add($"- {key}: " + LocalizationService.Pick("entfallen", "removed"));
         }
 
         return changes;
@@ -179,6 +194,19 @@ public static class ConnectorConfigurationDiff
             map[key] = body;
         }
         return map;
+    }
+
+    private static bool IsTracked(string line) => !line.StartsWith("karte:", StringComparison.Ordinal);
+
+    /// <summary>Schneidet den frueher mitgespeicherten Verbindungsstatus von Terminalzeilen ab.</summary>
+    private static string Normalize(string line)
+    {
+        if (!line.StartsWith("terminal:", StringComparison.Ordinal))
+            return line;
+        foreach (var suffix in new[] { "|verbunden", "|getrennt", "|unbekannt" })
+            if (line.EndsWith(suffix, StringComparison.Ordinal))
+                return line[..^suffix.Length];
+        return line;
     }
 
     public static string Fingerprint(IReadOnlyList<string> lines)

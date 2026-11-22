@@ -52,7 +52,7 @@ public static class ConnectorEventNotifications
     public static ConnectorAlert? Decide(ConnectorEvent evt, ConnectorEventToastFilter filter)
     {
         var topic = (evt.Topic ?? "").Trim();
-        var ct = evt.Param("CtID") ?? evt.Param("CtId") ?? evt.Param("CTId") ?? "";
+        var ct = evt.Param("CtID") ?? "";
         var where = string.IsNullOrWhiteSpace(ct) ? "" : L($" (Terminal {ct})", $" (terminal {ct})");
 
         if (ConnectorTopics.EqualsTopic(topic, ConnectorTopics.CardRemoved) || ConnectorTopics.EqualsTopic(topic, ConnectorTopics.CardInserted))
@@ -111,7 +111,7 @@ public static class ConnectorEventNotifications
         var topic = (evt.Topic ?? "").Trim();
         if (ConnectorTopics.EqualsTopic(topic, ConnectorTopics.TerminalDisconnected))
         {
-            var ct = evt.Param("CtID") ?? evt.Param("CtId") ?? evt.Param("CTId");
+            var ct = evt.Param("CtID");
             return string.IsNullOrWhiteSpace(ct) ? null : "ct-" + ct;
         }
         if (ConnectorTopics.EqualsTopic(topic, ConnectorTopics.CardRemoved) && KindOf(evt) == CardKind.SmcB)

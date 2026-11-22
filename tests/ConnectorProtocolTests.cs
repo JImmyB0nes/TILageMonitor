@@ -722,7 +722,7 @@ public sealed class ConnectorHealthTests
 
         Assert.Contains("~ firmware: 1.2.3 → 1.2.4", changes);
         Assert.Contains("+ terminal CT2: CT2=Empfang|CC200|verbunden", changes);
-        Assert.Contains("- terminal CT1: entfallen", changes);
+        Assert.Contains("- terminal CT1: " + LocalizationService.Pick("entfallen", "removed"), changes);
         Assert.DoesNotContain(changes, c => c.Contains("EventService"));
     }
 

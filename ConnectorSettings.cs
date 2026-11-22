@@ -115,6 +115,46 @@ public sealed class ConnectorSettings
     [JsonPropertyName("showMainWindowCard")]
     public bool ShowMainWindowCard { get; set; } = true;
 
+    /// <summary>
+    /// PIN-Verwaltung (VerifyPin, ChangePin, UnblockPin, EnablePin, DisablePin) im
+    /// Konnektor-Fenster erlauben. Standardmaessig AUS: die App ist ein Statusmonitor und soll
+    /// am Konnektor nichts veraendern, solange das nicht ausdruecklich gewollt ist.
+    /// </summary>
+    [JsonPropertyName("allowPinManagement")]
+    public bool AllowPinManagement { get; set; }
+
+    /// <summary>
+    /// Schluessel der Angaben, deren Aenderung einen Neustart der Ueberwachung braucht. Alles
+    /// andere (Toast-Filter, Verlauf, Karte im Hauptfenster) liest der Monitor bei
+    /// jedem Abruf neu – ein Neustart wuerde nur Abos kappen und Warnungen erneut melden.
+    /// </summary>
+    [JsonIgnore]
+    public string RestartKey => string.Join("\u001f",
+        Enabled, MonitoringEnabled, IsConfigured, EventSubscriptionsEnabled,
+        Host.Trim(), UseTls, ClientCertificatePath.Trim(), ClientCertificatePasswordProtected ?? "",
+        BasicAuthUser.Trim(), BasicAuthPasswordProtected ?? "",
+        MandantId.Trim(), ClientSystemId.Trim(), WorkplaceId.Trim(), UserId.Trim(),
+        PinnedServerThumbprint ?? "", RewriteEndpointHost, PollMinutes);
+
+    /// <summary>Basic-Auth ist gesetzt, die Verbindung aber unverschluesselt (http).</summary>
+    [JsonIgnore]
+    public bool SendsBasicAuthInClear
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(BasicAuthUser))
+                return false;
+            try
+            {
+                return ConnectorProtocol.BuildBaseUri(Host, UseTls).Scheme == Uri.UriSchemeHttp;
+            }
+            catch
+            {
+                return !UseTls;
+            }
+        }
+    }
+
     [JsonIgnore]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Host) &&

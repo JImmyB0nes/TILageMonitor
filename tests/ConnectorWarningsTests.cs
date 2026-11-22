@@ -204,7 +204,9 @@ public sealed class ConnectorWarningsTests
         Assert.True(ConnectorToastOwnership.IsOwnedByLedger("cert-expiring-1"));
         Assert.True(ConnectorToastOwnership.IsOwnedByLedger("pin-lasttry-1-PIN.CH"));
         Assert.False(ConnectorToastOwnership.IsOwnedByLedger("vpn-ti"));
-        Assert.False(ConnectorToastOwnership.IsOwnedByLedger("qes-expired-1"));
+        // Seit 3.1.2: ein abgelaufenes C.QES meldet der Ledger (fruehestes Kartenzertifikat) –
+        // der Health-Toast kaeme sonst zusaetzlich fuer denselben Grund.
+        Assert.True(ConnectorToastOwnership.IsOwnedByLedger("qes-expired-1"));
     }
 
     [Fact]

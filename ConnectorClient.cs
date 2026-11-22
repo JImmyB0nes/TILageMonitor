@@ -46,13 +46,17 @@ public sealed class ConnectorClient : IDisposable
     public string LastRequestXml { get; private set; } = "";
     public string LastResponseXml { get; private set; } = "";
 
+    /// <summary>Die eingestellte Benutzer-ID, auch wenn sie gerade weggelassen wird.</summary>
+    private readonly string _configuredUserId;
+
     public ConnectorClient(ConnectorSettings settings, Action<string>? log = null, IConnectorHttpTransport? transport = null)
     {
         _settings = settings.Clone();
         _log = log;
         _baseUri = ConnectorProtocol.BuildBaseUri(_settings.Host, _settings.UseTls);
 
-        if (ConnectorCapabilities.GetOmitUserId(_settings.Host) == true)
+        _configuredUserId = _settings.UserId;
+        if (ConnectorCapabilities.GetOmitUserId(ConnectorCapabilities.OmitKey(_settings.Host, _configuredUserId)) == true)
             _settings.UserId = "";
 
         if (!string.IsNullOrWhiteSpace(_settings.ClientCertificatePath))
@@ -74,7 +78,7 @@ public sealed class ConnectorClient : IDisposable
     public static ConnectorClientCredentials LoadClientCertificate(string path, string? password)
     {
         if (!File.Exists(path))
-            throw new FileNotFoundException($"Zertifikatsdatei nicht gefunden: {path}");
+            throw new FileNotFoundException(LocalizationService.Pick($"Zertifikatsdatei nicht gefunden: {path}", $"Certificate file not found: {path}"));
 
         try
         {
@@ -137,12 +141,14 @@ public sealed class ConnectorClient : IDisposable
             {
                 var hint = response.StatusCode switch
                 {
-                    401 => " – Authentifizierung abgelehnt (Client-Zertifikat bzw. Benutzer/Passwort prüfen).",
-                    403 => " – Zugriff verweigert (Clientsystem im Konnektor freigeschaltet?).",
-                    404 => " – Endpunkt nicht gefunden.",
+                    401 => LocalizationService.Pick(" – Authentifizierung abgelehnt (Client-Zertifikat bzw. Benutzer/Passwort prüfen).",
+                        " – authentication rejected (check client certificate or user/password)."),
+                    403 => LocalizationService.Pick(" – Zugriff verweigert (Clientsystem im Konnektor freigeschaltet?).",
+                        " – access denied (is the client system enabled in the connector?)."),
+                    404 => LocalizationService.Pick(" – Endpunkt nicht gefunden.", " – endpoint not found."),
                     _ => ""
                 };
-                throw new HttpRequestException($"HTTP {response.StatusCode} {response.Reason}{hint}");
+                throw new HttpRequestException($"HTTP {response.StatusCode} {response.Reason}{hint}", null, (System.Net.HttpStatusCode)response.StatusCode);
             }
             return text;
         }
@@ -161,7 +167,9 @@ public sealed class ConnectorClient : IDisposable
         {
             _log?.Invoke($"{uri.AbsolutePath} → Zeitüberschreitung nach {timeout.TotalSeconds:0} s");
             _directory = null;
-            throw new TimeoutException($"Zeitüberschreitung: Der Konnektor hat nicht innerhalb von {timeout.TotalSeconds:0} Sekunden geantwortet.");
+            throw new TimeoutException(LocalizationService.Pick(
+                $"Zeitüberschreitung: Der Konnektor hat nicht innerhalb von {timeout.TotalSeconds:0} Sekunden geantwortet.",
+                $"Timeout: the connector did not answer within {timeout.TotalSeconds:0} seconds."));
         }
     }
 
@@ -187,12 +195,15 @@ public sealed class ConnectorClient : IDisposable
         return ConnectorProtocol.ParseBody(body);
     }
 
-        private async Task<XElement> CallAsync(string serviceName, string defaultNs, Func<XNamespace, XElement> build, string operation, TimeSpan? timeout, CancellationToken ct)
+    private Task<XElement> CallAsync(string serviceName, string defaultNs, Func<XNamespace, XElement> build, string operation, TimeSpan? timeout, CancellationToken ct) =>
+        CallWithUserIdRecoveryAsync(serviceName, defaultNs, build, operation, timeout, ct);
+
+    private async Task<XElement> CallCoreAsync(string serviceName, string defaultNs, Func<XNamespace, XElement> build, string operation, TimeSpan? timeout, CancellationToken ct)
     {
         var directory = await GetServiceDirectoryAsync(ct);
         var service = directory.Find(serviceName)
-                      ?? throw new ConnectorFaultException($"Der Konnektor bietet den Dienst {serviceName} nicht an.");
-        var endpoint = ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);
+                      ?? throw new ConnectorFaultException(LocalizationService.Pick($"Der Konnektor bietet den Dienst {serviceName} nicht an.", $"The connector does not offer the service {serviceName}."));
+        var endpoint = ConnectorProtocol.ResolveEndpoint(service.EndpointFor(_baseUri.Scheme == Uri.UriSchemeHttps), _baseUri, _settings.RewriteEndpointHost);
 
         // Namespace-Varianten der Reihe nach durchprobieren. Das ist ein echter Test, kein Raten:
         // antwortet der Konnektor mit einer Variante, hoeren wir sofort auf. Scheitern alle, ist
@@ -239,7 +250,7 @@ public sealed class ConnectorClient : IDisposable
                 var answer = await PostAsync(serviceName, operation, candidates[0], endpoint,
                     ConnectorProtocol.Envelope(build(candidates[0])), timeout, ct);
                 _log?.Invoke($"  Gelungen ohne Benutzer-ID \u201E{saved}\u201C – die akzeptiert dieser Konnektor nicht");
-                ConnectorCapabilities.SetOmitUserId(_settings.Host, true);
+                ConnectorCapabilities.SetOmitUserId(ConnectorCapabilities.OmitKey(_settings.Host, saved), true);
                 _settings.UserId = "";
                 _okByService[serviceName] = _okByService.TryGetValue(serviceName, out var done) ? done + 1 : 1;
                 return answer;
@@ -258,6 +269,25 @@ public sealed class ConnectorClient : IDisposable
     }
 
     /// <summary>
+    /// Wird die Benutzer-ID gerade weggelassen und verlangt der Konnektor sie (4003, z. B. HBA-
+    /// Operationen), einmal MIT ID wiederholen – und die Weglass-Annahme fuer diese ID verwerfen.
+    /// </summary>
+    private async Task<XElement> CallWithUserIdRecoveryAsync(string serviceName, string defaultNs, Func<XNamespace, XElement> build, string operation, TimeSpan? timeout, CancellationToken ct)
+    {
+        try
+        {
+            return await CallCoreAsync(serviceName, defaultNs, build, operation, timeout, ct);
+        }
+        catch (ConnectorFaultException ex) when (ex.Code == "4003" && string.IsNullOrWhiteSpace(_settings.UserId) && !string.IsNullOrWhiteSpace(_configuredUserId))
+        {
+            _log?.Invoke(LocalizationService.Pick("  4003 ohne Benutzer-ID – erneuter Versuch mit Benutzer-ID", "  4003 without user ID – retrying with user ID"));
+            ConnectorCapabilities.SetOmitUserId(ConnectorCapabilities.OmitKey(_settings.Host, _configuredUserId), false);
+            _settings.UserId = _configuredUserId;
+            return await CallCoreAsync(serviceName, defaultNs, build, operation, timeout, ct);
+        }
+    }
+
+    /// <summary>
     /// Erklaert einen zurueckgewiesenen Aufruf anhand dessen, was die Sitzung bisher gezeigt hat.
     /// Der entscheidende Unterschied zu frueheren Versionen: der Aufrufkontext wird nicht mehr
     /// pauschal beschuldigt, sondern gegen die erfolgreich beantworteten Dienste desselben
@@ -272,57 +302,69 @@ public sealed class ConnectorClient : IDisposable
         var contextProblems = ConnectorProtocol.ValidateContextIds(_settings);
         if (contextProblems is not null)
         {
-            lines.Add("Der Aufrufkontext enthaelt unzulässige Angaben:\n" + contextProblems);
+            lines.Add(L("Der Aufrufkontext enthält unzulässige Angaben:\n", "The call context contains invalid values:\n") + contextProblems);
         }
         else if (_okByService.Count > 0)
         {
-            var working = string.Join(", ", _okByService.OrderBy(k => k.Key).Select(k => $"{k.Key} ({_okByService[k.Key]}mal)"));
-            lines.Add($"Mit exakt demselben Aufrufkontext haben in diesem Durchlauf {working} geantwortet. " +
-                      "Der Kontext kann die Ursache dieser Ablehnung deshalb nicht sein.");
+            var working = string.Join(", ", _okByService.OrderBy(k => k.Key).Select(k => $"{k.Key} ({_okByService[k.Key]}×)"));
+            lines.Add(L($"Mit exakt demselben Aufrufkontext haben in diesem Durchlauf {working} geantwortet. " +
+                        "Der Kontext kann die Ursache dieser Ablehnung deshalb nicht sein.",
+                        $"With exactly the same call context, {working} answered in this run. " +
+                        "The context therefore cannot be the cause of this rejection."));
         }
         else
         {
-            lines.Add("Noch kein anderer Dienst mit diesem Kontext befragt – Vergleiche fehlen. " +
-                      $"Kontext: Mandant=\u201E{_settings.MandantId}\u201C, Clientsystem=\u201E{_settings.ClientSystemId}\u201C, " +
+            var ctx = $"Mandant=\u201E{_settings.MandantId}\u201C, Clientsystem=\u201E{_settings.ClientSystemId}\u201C, " +
                       $"Arbeitsplatz=\u201E{_settings.WorkplaceId}\u201C" +
-                      (string.IsNullOrWhiteSpace(_settings.UserId) ? "" : $", Benutzer=\u201E{_settings.UserId}\u201C"));
+                      (string.IsNullOrWhiteSpace(_settings.UserId) ? "" : $", User=\u201E{_settings.UserId}\u201C");
+            lines.Add(L("Noch kein anderer Dienst mit diesem Kontext befragt – Vergleiche fehlen. Kontext: ",
+                        "No other service queried with this context yet – nothing to compare. Context: ") + ctx);
         }
 
         // 2. Namespace: nur ein Hinweis, wenn das Verzeichnis tatsaechlich den /WSDL/-Wert liefert.
         if (candidates.Count > 1)
-            lines.Add("Getestete Namespaces: " + string.Join(", ", candidates));
+            lines.Add(L("Getestete Namespaces: ", "Namespaces tried: ") + string.Join(", ", candidates));
 
         // 3. 4003: eine zwingende Angabe fehlt. Fuer Kartensitzungen des HBA ist das die Benutzer-ID.
         if (code.StartsWith("4003", StringComparison.Ordinal))
         {
             lines.Add(string.IsNullOrWhiteSpace(_settings.UserId)
-                ? "Diese Operation braucht eine Benutzer-ID im Aufrufkontext. Sie ist im Einstellfeld " +
-                  "\u201EBenutzer-ID (optional)\u201C leer – bitte die in der Konnektor-Administration gefuehrte " +
-                  "Benutzer-ID des Arbeitsplatzes eintragen und erneut abrufen."
-                : $"Der Konnektor akzeptiert die eingetragene Benutzer-ID \u201E{_settings.UserId}\u201C fuer diese " +
-                  "Operation nicht. Vergleichen mit der Konnektor-Administration, dort steht die gueltige Schreibweise.");
+                ? L("Diese Operation braucht eine Benutzer-ID im Aufrufkontext. Sie ist im Einstellfeld " +
+                    "\u201EBenutzer-ID (optional)\u201C leer – bitte die in der Konnektor-Administration geführte " +
+                    "Benutzer-ID des Arbeitsplatzes eintragen und erneut abrufen.",
+                    "This operation needs a user ID in the call context. The field \u201EUser ID (optional)\u201C is empty – " +
+                    "please enter the workplace user ID kept in the connector administration and retry.")
+                : L($"Der Konnektor akzeptiert die eingetragene Benutzer-ID \u201E{_settings.UserId}\u201C für diese " +
+                    "Operation nicht. Mit der Konnektor-Administration vergleichen, dort steht die gültige Schreibweise.",
+                    $"The connector does not accept the user ID \u201E{_settings.UserId}\u201C for this operation. " +
+                    "Compare with the connector administration for the valid spelling."));
         }
 
         // 4. 4000 auf genau einer Operation, obwohl derselbe Dienst sonst antwortet: dann liegt es
         // am Inhalt dieser Operation, nicht an Adresse, Namespace oder Kontext.
         else if (code.StartsWith("4000", StringComparison.Ordinal) && _okByService.TryGetValue(serviceName, out var passed))
         {
-            lines.Add($"Der {serviceName} hat in diesem Durchlauf schon {passed} Mal geantwortet, nur {operation} wird abgelehnt. " +
-                      "Adresse, Namespace und Aufrufkontext sind damit ausgeschlossen. Die Ablehnung haengt an den " +
-                      "Angaben dieser einen Operation. Bei PIN-Aufrufen ist der gueltige Ort von PinTyp das " +
-                      "Gemeinschaftsschema CardServiceCommon/v2.0, nicht der Dienst-Namespace " +
-                      "(Beispiel im Implementierungsleitfaden gemILF_PS) – dieser Fall wird hier automatisch behoben.");
+            lines.Add(L($"Der {serviceName} hat in diesem Durchlauf schon {passed} Mal geantwortet, nur {operation} wird abgelehnt. " +
+                        "Adresse, Namespace und Aufrufkontext sind damit ausgeschlossen. Die Ablehnung hängt an den " +
+                        "Angaben dieser einen Operation.",
+                        $"{serviceName} already answered {passed} times in this run; only {operation} is rejected. " +
+                        "Address, namespace and call context are therefore ruled out. The rejection depends on the " +
+                        "content of this one operation."));
         }
         else if (code.StartsWith("4000", StringComparison.Ordinal))
         {
-            lines.Add("Der Namespace wurde in allen Varianten probiert und jeweils gleich abgelehnt, " +
-                      "er scheidet als Ursache damit aus. Ubrig bleiben die Angaben in der Nachricht selbst.");
+            lines.Add(L("Der Namespace wurde in allen Varianten probiert und jeweils gleich abgelehnt, " +
+                        "er scheidet als Ursache damit aus. Übrig bleiben die Angaben in der Nachricht selbst.",
+                        "All namespace variants were tried and rejected the same way, so the namespace is ruled out. " +
+                        "What remains is the content of the message itself."));
         }
 
-        lines.Add($"Endpunkt: {endpoint}");
-        lines.Add($"Zuletzt gesendeter Request: {ShortenXml(LastRequestXml)}");
+        lines.Add(L("Endpunkt: ", "Endpoint: ") + endpoint);
+        lines.Add(L("Zuletzt gesendeter Request: ", "Last request sent: ") + ShortenXml(LastRequestXml));
         return string.Join("\n", lines);
     }
+
+    private static string L(string de, string en) => LocalizationService.Pick(de, en);
 
     private static string ShortenXml(string xml) =>
         xml.Length <= 900 ? xml : xml[..900] + " …";
@@ -343,7 +385,7 @@ public sealed class ConnectorClient : IDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw new ConnectorFaultException($"connector.sds konnte nicht gelesen werden: {ex.Message}");
+            throw new ConnectorFaultException(LocalizationService.Pick($"connector.sds konnte nicht gelesen werden: {ex.Message}", $"connector.sds could not be read: {ex.Message}"));
         }
         _log?.Invoke($"Dienstverzeichnis: {_directory.Services.Count} Dienst-Versionen");
         return _directory;
@@ -377,7 +419,7 @@ public sealed class ConnectorClient : IDisposable
 
         // Beide Varianten abgelehnt: das Geaechtnis unentschieden lassen, damit spaeter
         // erneut probiert wird, statt auf einer widerlegten Annahme stehen zu bleiben.
-        ConnectorCapabilities.Forget(_settings.Host);
+        ConnectorCapabilities.ForgetMandantWide(_settings.Host);
         return ConnectorProtocol.ParseCards(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
             ns => ConnectorProtocol.GetCards(ns, _settings, false), "GetCards", null, ct));
     }
@@ -401,7 +443,7 @@ public sealed class ConnectorClient : IDisposable
             }
         }
 
-        ConnectorCapabilities.Forget(_settings.Host);
+        ConnectorCapabilities.ForgetMandantWide(_settings.Host);
         return ConnectorProtocol.ParseCardTerminals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
             ns => ConnectorProtocol.GetCardTerminals(ns, _settings, false), "GetCardTerminals", null, ct));
     }
@@ -523,13 +565,13 @@ public sealed class ConnectorClient : IDisposable
             }
         }
 
-        await Try("Betriebszustand (GetResourceInformation)", async () => snapshot.Resource = await GetResourceInformationAsync(ct));
-        await Try("Kartenterminals (GetCardTerminals)", async () => snapshot.Terminals = await GetCardTerminalsAsync(ct));
-        await Try("Karten (GetCards)", async () => snapshot.Cards = await GetCardsAsync(ct));
+        await Try(LocalizationService.Pick("Betriebszustand", "Operating state") + " (GetResourceInformation)", async () => snapshot.Resource = await GetResourceInformationAsync(ct));
+        await Try(LocalizationService.Pick("Kartenterminals", "Card terminals") + " (GetCardTerminals)", async () => snapshot.Terminals = await GetCardTerminalsAsync(ct));
+        await Try(LocalizationService.Pick("Karten", "Cards") + " (GetCards)", async () => snapshot.Cards = await GetCardsAsync(ct));
 
         // Aktive Abos anzeigen: ein getaetigtes Abo, an das der Konnektor nicht mehr sendet,
         // ist eine typische Ursache dafuer, dass die App eine gesteckte Karte nicht merkt.
-        await Try("Ereignis-Abos (GetSubscription)", async () => snapshot.Subscriptions = await GetSubscriptionsAsync(ct));
+        await Try(LocalizationService.Pick("Ereignis-Abos", "Event subscriptions") + " (GetSubscription)", async () => snapshot.Subscriptions = await GetSubscriptionsAsync(ct));
 
         foreach (var card in snapshot.Cards.Where(c => c.SupportsPinManagement))
         {

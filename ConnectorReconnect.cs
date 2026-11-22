@@ -53,4 +53,24 @@ public static class ConnectorReconnect
     /// </summary>
     public static bool ShouldNotifyUnreachable(int consecutiveFailures, DateTime? outageSince, DateTime now, bool alreadyNotified) =>
         !alreadyNotified && consecutiveFailures >= 2 && outageSince is { } since && now - since >= TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Ein Fehler, bei dem der Konnektor erreichbar ist, die Anfrage aber ablehnt (gematik-
+    /// Fehlercode, HTTP 401/403/404, nicht gepinntes Zertifikat, fehlendes/falsches P12). Solche
+    /// Fehler sind kein Ausfall: kein Backoff, kein "nicht erreichbar"-Toast, kein roter Balken
+    /// im Verlauf – sondern ein Hinweis auf die Einstellungen.
+    /// </summary>
+    public static bool IsConfigurationProblem(Exception? ex) => ex switch
+    {
+        null => false,
+        ConnectorFaultException => true,
+        ConnectorUntrustedServerException => true,
+        ConnectorCredentialException => true,
+        SecretProtectorException => true,
+        System.IO.FileNotFoundException => true,
+        System.Net.Http.HttpRequestException http => http.StatusCode is System.Net.HttpStatusCode.Unauthorized
+            or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.NotFound,
+        ConnectorTlsException tls => tls.PinFailure || tls.Alert is 42 or 43 or 44 or 45 or 46 or 48 or 49,
+        _ => false
+    };
 }

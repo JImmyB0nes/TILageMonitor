@@ -247,6 +247,13 @@
                                   Margin="0,0,0,10"
                                   Checked="ConnectorCard_Changed"
                                   Unchecked="ConnectorCard_Changed"/>
+                        <CheckBox x:Name="ConnectorPinManagementToggle"
+                                  Content="PIN-Verwaltung erlauben"
+                                  ToolTip="PIN verifizieren, ändern, mit PUK entsperren, aktivieren und deaktivieren im Konnektor-Fenster. Standardmäßig aus – die App liest dann nur."
+                                  Style="{DynamicResource ThemeAwareCheckBoxStyle}"
+                                  Margin="0,0,0,10"
+                                  Checked="ConnectorPinManagement_Changed"
+                                  Unchecked="ConnectorPinManagement_Changed"/>
                         <TextBlock Text="Konnektor-Benachrichtigungen" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextMain}" Margin="0,2,0,6"/>
                         <CheckBox x:Name="ConnectorCertExpiryToggle"

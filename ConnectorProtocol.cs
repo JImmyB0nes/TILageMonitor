@@ -67,7 +67,7 @@ public static class ConnectorProtocol
     public static ConnectorServiceDirectory ParseServiceDirectory(string xml)
     {
         var doc = XDocument.Parse(xml);
-        var root = doc.Root ?? throw new FormatException("connector.sds ist leer.");
+        var root = doc.Root ?? throw new FormatException(LocalizationService.Pick("connector.sds ist leer.", "connector.sds is empty."));
         var result = new ConnectorServiceDirectory
         {
             ProductVendorId = Value(root, "ProductVendorID"),
@@ -88,16 +88,16 @@ public static class ConnectorProtocol
             var name = (string?)service.Attribute("Name") ?? "";
             foreach (var version in Descendants(service, "Version"))
             {
-                var endpoint =
-                    Descendants(version, "EndpointTLS").Select(e => (string?)e.Attribute("Location")).FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ??
-                    Descendants(version, "Endpoint").Select(e => (string?)e.Attribute("Location")).FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ??
-                    "";
+                var tls = Descendants(version, "EndpointTLS").Select(e => (string?)e.Attribute("Location")).FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
+                var plain = Descendants(version, "Endpoint").Select(e => (string?)e.Attribute("Location")).FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
                 result.Services.Add(new ConnectorServiceEndpoint
                 {
                     Name = name,
                     Version = (string?)version.Attribute("Version") ?? "",
                     TargetNamespace = (string?)version.Attribute("TargetNamespace") ?? "",
-                    Endpoint = endpoint
+                    Endpoint = tls.Length > 0 ? tls : plain,
+                    EndpointTls = tls,
+                    EndpointPlain = plain
                 });
             }
         }
@@ -131,11 +131,11 @@ public static class ConnectorProtocol
     {
         var trimmed = (host ?? "").Trim().TrimEnd('/');
         if (trimmed.Length == 0)
-            throw new ArgumentException("Keine Konnektor-Adresse angegeben.");
+            throw new ArgumentException(LocalizationService.Pick("Keine Konnektor-Adresse angegeben.", "No connector address given."));
         if (!trimmed.Contains("://", StringComparison.Ordinal))
             trimmed = (useTls ? "https://" : "http://") + trimmed;
         if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
-            throw new ArgumentException($"Ungültige Konnektor-Adresse: {host}");
+            throw new ArgumentException(LocalizationService.Pick($"Ungültige Konnektor-Adresse: {host}", $"Invalid connector address: {host}"));
         return new Uri(uri.GetLeftPart(UriPartial.Authority) + "/");
     }
 
@@ -368,12 +368,12 @@ public static class ConnectorProtocol
         }
         catch (Exception ex)
         {
-            throw new ConnectorFaultException($"Antwort des Konnektors ist kein gültiges XML: {ex.Message}");
+            throw new ConnectorFaultException(LocalizationService.Pick($"Antwort des Konnektors ist kein gültiges XML: {ex.Message}", $"The connector's response is not valid XML: {ex.Message}"));
         }
 
         var body = doc.Root is null ? null : Descendants(doc.Root, "Body").FirstOrDefault();
         var first = body?.Elements().FirstOrDefault()
-                    ?? throw new ConnectorFaultException("Antwort des Konnektors enthält keinen SOAP-Body.");
+                    ?? throw new ConnectorFaultException(LocalizationService.Pick("Antwort des Konnektors enthält keinen SOAP-Body.", "The connector's response contains no SOAP body."));
 
         if (first.Name.LocalName == "Fault")
             throw FaultFrom(first);
@@ -397,7 +397,7 @@ public static class ConnectorProtocol
         var message = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(code))
             message.Append(code).Append(": ");
-        message.Append(!string.IsNullOrWhiteSpace(text) ? text : !string.IsNullOrWhiteSpace(faultString) ? faultString : "Unbekannter Konnektor-Fehler");
+        message.Append(!string.IsNullOrWhiteSpace(text) ? text : !string.IsNullOrWhiteSpace(faultString) ? faultString : LocalizationService.Pick("Unbekannter Konnektor-Fehler", "Unknown connector error"));
         if (!string.IsNullOrWhiteSpace(detail) && detail != text)
             message.Append(" (").Append(detail).Append(')');
 
@@ -529,11 +529,15 @@ public static class ConnectorProtocol
 
         // Erlaubt ist sowohl eine einzelne Ereignis-Nachricht als auch eine SOAP-Huelle.
         var element = Descendants(root, "Event").FirstOrDefault() ?? root;
-        var parameters = Descendants(element, "Parameter")
-            .ToDictionary(
-                p => Value(p, "Key"),
-                p => Value(p, "Value"),
-                StringComparer.Ordinal);
+        // Schluessel ohne Ruecksicht auf Gross-/Kleinschreibung (Spec: "CtID", manche Firmware
+        // "CtId"); doppelte Schluessel duerfen das Ereignis nicht verwerfen – der erste gilt.
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in Descendants(element, "Parameter"))
+        {
+            var key = Value(p, "Key");
+            if (key.Length > 0)
+                parameters.TryAdd(key, Value(p, "Value"));
+        }
 
         var topic = Value(element, "Topic");
         if (string.IsNullOrWhiteSpace(topic))

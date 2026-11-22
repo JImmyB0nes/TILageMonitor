@@ -253,8 +253,22 @@ public sealed class ConnectorTlsServer : DefaultTlsServer
         ProtocolVersion.TLSv13.DownTo(ProtocolVersion.TLSv12);
 
     protected override int[] GetSupportedCipherSuites() =>
-        TlsUtilities.GetSupportedCipherSuites(Crypto,
-            ConnectorTlsClient.Tls13CipherSuites.Concat(ConnectorTlsClient.Tls12CipherSuites).ToArray());
+        TlsUtilities.GetSupportedCipherSuites(Crypto, CipherSuitesFor(_credentials.KeyType));
+
+    /// <summary>
+    /// TLS 1.2 bindet die Suite an den Schluesseltyp des Serverzertifikats: Mit einem EC-Schluessel
+    /// (RISE: brainpoolP256r1) duerfen nur ECDHE_ECDSA-Suites ausgewaehlt werden, mit RSA nur
+    /// ECDHE_RSA. Wird beides angeboten und bevorzugt der Konnektor die "andere" Familie, scheitert
+    /// der Handshake (illegal_parameter) – und kein Ereignis kommt an. TLS 1.3 ist unabhaengig davon.
+    /// </summary>
+    public static int[] CipherSuitesFor(ConnectorKeyType keyType)
+    {
+        var rsa = keyType == ConnectorKeyType.Rsa;
+        var tls12 = ConnectorTlsClient.Tls12CipherSuites.Where(cs => rsa
+            ? TlsUtilities.GetKeyExchangeAlgorithm(cs) == KeyExchangeAlgorithm.ECDHE_RSA
+            : TlsUtilities.GetKeyExchangeAlgorithm(cs) == KeyExchangeAlgorithm.ECDHE_ECDSA);
+        return ConnectorTlsClient.Tls13CipherSuites.Concat(tls12).ToArray();
+    }
 
     public override int[] GetSupportedGroups() =>
         ConnectorTlsClient.Groups.Where(g => Crypto.HasNamedGroup(g)).ToArray();

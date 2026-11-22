@@ -7,6 +7,22 @@ public sealed class ConnectorServiceEndpoint
     public string Version { get; set; } = "";
     public string TargetNamespace { get; set; } = "";
     public string Endpoint { get; set; } = "";
+    public string EndpointTls { get; set; } = "";
+    public string EndpointPlain { get; set; } = "";
+
+    /// <summary>
+    /// Endpunkt passend zur konfigurierten Verbindungsart: mit TLS EndpointTLS, ohne TLS der
+    /// einfache Endpoint. Frueher gewann immer EndpointTLS – bei HTTP-Konfiguration landete
+    /// die Anfrage dann auf dem TLS-Port (mit http://) und scheiterte.
+    /// </summary>
+    public string EndpointFor(bool useTls)
+    {
+        var preferred = useTls ? EndpointTls : EndpointPlain;
+        if (!string.IsNullOrWhiteSpace(preferred))
+            return preferred;
+        var other = useTls ? EndpointPlain : EndpointTls;
+        return !string.IsNullOrWhiteSpace(other) ? other : Endpoint;
+    }
 }
 
 /// <summary>Produktinformationen und Dienste aus connector.sds.</summary>
@@ -99,13 +115,33 @@ public sealed class ConnectorSubscription
     public bool Alive(DateTime now) => TerminationTime is null || TerminationTime > now;
 
     /// <summary>
-    /// Gehoert dieser Eintrag zu einer Adresse auf diesem Rechner? Nach der Maschine getrennt,
-    /// nicht nach der vollen Adresse: der Lauscher wechselt den Hafen, wenn ein frueherer
-    /// Anlauf den naechsten Port besetzt haelt, und wer die Hafennummer mitvergleicht, haelt
-    /// das eigene Abo fuer verschwunden, waehrend es auf dem alten Hafen weiter laeuft. Nach
-    /// dem Topic zu trennen, scheitert an mehreren Eintraegen derselben Adresse erst recht.
+    /// Zeigt dieses Abo exakt auf <paramref name="eventTo"/> (Rechner UND Port)? Frueher genuegte
+    /// ein Teilstring des Rechners – "192.168.1.1" traf dann auch "192.168.1.10" und damit die
+    /// Abos anderer Arbeitsplaetze, die "Abos kuendigen" mitloeschte. Auf einem Terminalserver
+    /// teilen sich mehrere Sitzungen denselben Rechner, unterscheiden sich aber im Port.
     /// </summary>
-    public bool FromHost(string? host) => !string.IsNullOrWhiteSpace(host) && EventTo.Contains(host, StringComparison.OrdinalIgnoreCase);
+    public bool TargetsExactly(string? eventTo)
+    {
+        if (!TryParseTarget(eventTo, out var host, out var port) || !TryParseTarget(EventTo, out var mine, out var myPort))
+            return false;
+        return port == myPort && string.Equals(host, mine, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Zerlegt cetp://host:port bzw. cetp://[ipv6]:port.</summary>
+    public static bool TryParseTarget(string? address, out string host, out int port)
+    {
+        host = "";
+        port = 0;
+        var h = HostOf(address);
+        if (h is null)
+            return false;
+        var tail = address!.Contains("://", StringComparison.Ordinal) ? address[(address.IndexOf("://", StringComparison.Ordinal) + 3)..] : address;
+        var rest = tail[h.Length..].TrimEnd('/');
+        if (!rest.StartsWith(':') || !int.TryParse(rest[1..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out port))
+            return false;
+        host = h.Trim('[', ']');
+        return true;
+    }
 
     /// <summary>Rechneranteil einer cetp-Adresse, Hafen abgeschnitten. Null, wenn nichts
     /// uebrig bleibt, damit ein leerer Lauscher nicht mit jeder Adresse verglichen wird.</summary>
@@ -140,7 +176,7 @@ public sealed class ConnectorEvent
     public string Type { get; set; } = "";
     public string Severity { get; set; } = "";
     public string SubscriptionId { get; set; } = "";
-    public Dictionary<string, string> Parameters { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> Parameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public DateTime ReceivedAt { get; set; } = DateTime.Now;
 
     public string? Param(string key) => Parameters.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
@@ -399,5 +435,18 @@ public sealed class ConnectorUntrustedServerException : Exception
         Thumbprint = thumbprint;
         Subject = subject;
         NotAfter = notAfter;
+    }
+}
+
+/// <summary>Datensparsamkeit fuer Berichte und Logs.</summary>
+public static class ConnectorPrivacy
+{
+    /// <summary>Nur die letzten vier Stellen einer ICCSN – genug zum Wiedererkennen am Terminal.</summary>
+    public static string MaskIccsn(string? iccsn)
+    {
+        var v = (iccsn ?? "").Trim();
+        if (v.Length <= 4)
+            return v.Length == 0 ? "" : new string('•', v.Length);
+        return new string('•', v.Length - 4) + v[^4..];
     }
 }

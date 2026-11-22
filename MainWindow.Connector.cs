@@ -29,10 +29,14 @@ public partial class MainWindow
     {
         ConnectorMonitor.Restart();
         UpdateConnectorButton();
+        _settingsWindow?.SyncFrom(_settings);
     }
 
     /// <summary>Karte nach einer Einstellungsaenderung neu bewerten.</summary>
     public void RefreshConnectorCard() => UpdateConnectorButton();
+
+    /// <summary>Offenes Konnektor-Fenster neu zeichnen (z. B. nach "PIN-Verwaltung erlauben").</summary>
+    public void RefreshConnectorWindow() => _connectorWindow?.ApplyThemeRefresh();
 
     private void Connector_Click(object sender, RoutedEventArgs e) => OpenConnectorWindow();
 
@@ -63,45 +67,73 @@ public partial class MainWindow
         string marker;
         string tooltip;
 
-        if (!settings.Enabled || !settings.IsConfigured)
+        var state = ConnectorCardVisibility.Classify(settings, monitor.LastSnapshot is not null, monitor.LastError is not null, monitor.LastErrorIsConfiguration);
+        switch (state)
         {
-            marker = "";
-            tooltip = LocalizationService.Pick("Konnektor einrichten und auslesen", "Set up and read connector");
-        }
-        else if (monitor.LastError is not null)
-        {
-            marker = "  ⛔";
-            tooltip = LocalizationService.Pick("Konnektor nicht erreichbar: ", "Connector unreachable: ") + monitor.LastError;
-        }
-        else if (monitor.LastSnapshot is null)
-        {
-            marker = "";
-            tooltip = LocalizationService.Pick("Konnektor wird abgefragt …", "Querying connector …");
-        }
-        else
-        {
-            var worst = ConnectorHealth.Worst(monitor.LastAlerts);
-            marker = worst switch
+            case ConnectorCardVisibility.State.NotSetUp:
+                marker = "";
+                tooltip = LocalizationService.Pick("Konnektor einrichten und auslesen", "Set up and read connector");
+                break;
+            case ConnectorCardVisibility.State.MonitoringOff:
+                marker = "";
+                tooltip = LocalizationService.Pick("Hintergrundüberwachung aus – zum Auslesen öffnen", "Background monitoring off – open to read");
+                break;
+            case ConnectorCardVisibility.State.Unreachable:
+                marker = "  ⛔";
+                tooltip = LocalizationService.Pick("Konnektor nicht erreichbar: ", "Connector unreachable: ") + monitor.LastError;
+                break;
+            case ConnectorCardVisibility.State.Rejected:
+                marker = "  ⚠";
+                tooltip = LocalizationService.Pick("Konnektor lehnt die Abfrage ab: ", "Connector rejects the request: ") + monitor.LastError;
+                break;
+            case ConnectorCardVisibility.State.Querying:
+                marker = "";
+                tooltip = LocalizationService.Pick("Konnektor wird abgefragt …", "Querying connector …");
+                break;
+            default:
             {
-                ToastUrgency.Error => "  ⛔",
-                ToastUrgency.Warning => "  ⚠",
-                _ => "  ✓"
-            };
-            tooltip = monitor.LastAlerts.Count == 0
-                ? LocalizationService.Pick($"Konnektor OK · Stand {monitor.LastSnapshot.RetrievedAt:HH:mm}", $"Connector OK · as of {monitor.LastSnapshot.RetrievedAt:HH:mm}")
-                : string.Join(Environment.NewLine, monitor.LastAlerts.Select(a => "• " + a.Title));
+                var worst = ConnectorHealth.Worst(monitor.LastAlerts);
+                marker = worst switch
+                {
+                    ToastUrgency.Error => "  ⛔",
+                    ToastUrgency.Warning => "  ⚠",
+                    _ => "  ✓"
+                };
+                tooltip = monitor.LastAlerts.Count == 0
+                    ? LocalizationService.Pick($"Konnektor OK · Stand {monitor.LastSnapshot!.RetrievedAt:HH:mm}", $"Connector OK · as of {monitor.LastSnapshot!.RetrievedAt:HH:mm}")
+                    : string.Join(Environment.NewLine, monitor.LastAlerts.Select(a => "• " + a.Title));
+                break;
+            }
         }
 
         ConnectorButton.Content = LocalizationService.Pick("🔌  Konnektor", "🔌  Connector") + marker;
         ConnectorButton.ToolTip = tooltip;
-        UpdateConnectorCard(settings, monitor, tooltip);
+        UpdateConnectorCard(settings, monitor, tooltip, state);
     }
 
     private void ConnectorCard_MouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        if (e.ChangedButton != System.Windows.Input.MouseButton.Left)
+        if (e.ChangedButton != System.Windows.Input.MouseButton.Left || e.Handled)
+            return;
+        // Klick auf X oder "Öffnen": die Knoepfe erledigen das selbst – die Karte darf nicht
+        // zusaetzlich das Fenster oeffnen (beim X waere das genau das Gegenteil).
+        if (IsInsideButton(e.OriginalSource as DependencyObject))
             return;
         OpenConnectorWindow();
+    }
+
+    private static bool IsInsideButton(DependencyObject? source)
+    {
+        for (var node = source; node is not null; node = node is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D
+                 ? System.Windows.Media.VisualTreeHelper.GetParent(node)
+                 : LogicalTreeHelper.GetParent(node))
+        {
+            if (node is System.Windows.Controls.Primitives.ButtonBase)
+                return true;
+            if (node is System.Windows.Controls.Border { Name: "ConnectorStatusCard" })
+                return false;
+        }
+        return false;
     }
 
     /// <summary>X auf der Konnektor-Karte: ausblenden und merken. Wieder einblenden in den Einstellungen.</summary>
@@ -111,6 +143,8 @@ public partial class MainWindow
         _settings.Connector.ShowMainWindowCard = false;
         SettingsStore.Save(_settings);
         UpdateConnectorButton();
+        // Offene Einstellungen nachziehen, sonst steht dort weiter "Karte anzeigen" angehakt.
+        _settingsWindow?.SyncFrom(_settings);
     }
 
     private void ConnectorCard_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -122,7 +156,7 @@ public partial class MainWindow
         }
     }
 
-    private void UpdateConnectorCard(ConnectorSettings settings, ConnectorMonitor monitor, string tooltip)
+    private void UpdateConnectorCard(ConnectorSettings settings, ConnectorMonitor monitor, string tooltip, ConnectorCardVisibility.State state)
     {
         if (ConnectorStatusCard is null || ConnectorCardTitle is null)
             return;
@@ -141,18 +175,26 @@ public partial class MainWindow
 
         string detail;
         string iconBg = "AppIconCircleBackground";
-        if (!settings.Enabled || !settings.IsConfigured)
+        if (state == ConnectorCardVisibility.State.NotSetUp)
             detail = LocalizationService.Pick("Lokale TI-Anbindung einrichten und auslesen", "Set up and read the local TI connection");
-        else if (monitor.LastError is not null)
+        else if (state == ConnectorCardVisibility.State.MonitoringOff)
+            detail = LocalizationService.Pick("Hintergrundüberwachung ist aus – „Öffnen“ liest den Konnektor einmalig aus.",
+                "Background monitoring is off – “Open” reads the connector once.");
+        else if (state == ConnectorCardVisibility.State.Unreachable)
         {
             detail = LocalizationService.Pick("Nicht erreichbar: ", "Unreachable: ") + monitor.LastError;
             iconBg = "StatusOutage";
         }
-        else if (monitor.LastSnapshot is null)
+        else if (state == ConnectorCardVisibility.State.Rejected)
+        {
+            detail = LocalizationService.Pick("Abfrage abgelehnt: ", "Request rejected: ") + monitor.LastError;
+            iconBg = "StatusPartial";
+        }
+        else if (state == ConnectorCardVisibility.State.Querying)
             detail = LocalizationService.Pick("Wird abgefragt …", "Querying …");
         else
         {
-            var snap = monitor.LastSnapshot;
+            var snap = monitor.LastSnapshot!;
             var name = snap.Directory is null
                 ? LocalizationService.Pick("Konnektor", "Connector")
                 : $"{snap.Directory.ProductVendorName} {snap.Directory.ProductName}".Trim();
@@ -208,12 +250,17 @@ public partial class MainWindow
             chip.Child = row;
             ConnectorCardChips.Children.Add(chip);
         }
-        if (!settings.IsConfigured)
+        if (state == ConnectorCardVisibility.State.NotSetUp)
         {
             Chip(LocalizationService.Pick("Nicht eingerichtet", "Not set up"), null);
             return;
         }
-        Chip(LocalizationService.Pick("Erreichbar", "Reachable"), monitor.LastError is null && snapNow is not null);
+        if (state == ConnectorCardVisibility.State.MonitoringOff)
+        {
+            Chip(LocalizationService.Pick("Überwachung aus", "Monitoring off"), null);
+            return;
+        }
+        Chip(LocalizationService.Pick("Erreichbar", "Reachable"), ConnectorCardVisibility.Reachable(state));
         Chip("VPN TI", snapNow?.Resource?.IsTiOnline);
         Chip("VPN SIS", snapNow?.Resource?.IsSisOnline);
         Chip(LocalizationService.Pick("Live-Ereignisse", "Live events"), monitor.SubscriptionsAlive && monitor.EventStreamActive);

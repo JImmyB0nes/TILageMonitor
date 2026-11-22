@@ -299,6 +299,7 @@ public static class LocalizationService
         ["Durchsuchen…"] = "Browse…",
         ["Zertifikats-Passwort"] = "Certificate password",
         ["Leer lassen, um das gespeicherte Passwort zu behalten"] = "Leave empty to keep the saved password",
+        ["Gespeichertes Passwort entfernen"] = "Remove saved password",
         ["Mandant-ID"] = "Tenant ID (MandantId)",
         ["Clientsystem-ID"] = "Client system ID",
         ["Arbeitsplatz-ID"] = "Workplace ID",
@@ -381,6 +382,8 @@ public static class LocalizationService
         ["Verlauf lokal speichern (14 Tage)"] = "Store history locally (14 days)",
         ["Konnektor-Karte ausblenden"] = "Hide connector card",
         ["Konnektor-Karte im Hauptfenster anzeigen"] = "Show connector card in main window",
+        ["PIN-Verwaltung erlauben"] = "Allow PIN management",
+        ["PIN verifizieren, ändern, mit PUK entsperren, aktivieren und deaktivieren im Konnektor-Fenster. Standardmäßig aus – die App liest dann nur."] = "Verify, change, unblock with PUK, enable and disable PINs in the connector window. Off by default – the app then only reads.",
         ["Gilt, solange kein Konnektor eingerichtet ist. Ein eingerichteter Konnektor wird immer angezeigt."] = "Applies while no connector is set up. A configured connector is always shown."
     };
 
