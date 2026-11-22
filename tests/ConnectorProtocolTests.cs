@@ -547,11 +547,6 @@ public sealed class ConnectorProtocolTests
     }
 
 
-
-
-}
-
-
     [Fact]
     public void RenewSubscriptions_lists_ids_in_the_event_service_namespace()
     {
@@ -595,6 +590,7 @@ public sealed class ConnectorProtocolTests
         Assert.Equal("CARD/INSERTED", evt!.Topic);
         Assert.Equal("SMC-B", evt.Param("CardType"));
     }
+}
 
 public sealed class ConnectorHealthTests
 {
