@@ -5,8 +5,8 @@
 <h1 align="center">TI-Lage Monitor</h1>
 
 <p align="center">
-  <strong>gematik TI-Status im Windows-Tray — live, lokal, mit 14-Tage-Verlauf.</strong><br>
-  <em>Schlank · ohne Login · Community-App</em>
+  <strong>Der gematik-TI-Status und der lokale Konnektor — im Windows-Tray, lokal, ohne Login.</strong><br>
+  <em>Fluent-Oberfläche · 14-Tage-Verlauf · optionale Konnektor-Anbindung</em>
 </p>
 
 <p align="center">
@@ -20,48 +20,56 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/JImmyB0nes/TILageMonitor/releases/latest"><strong>⬇️ Download</strong></a>
+  <a href="https://github.com/JImmyB0nes/TILageMonitor/releases/latest"><strong>Download</strong></a>
   ·
-  <a href="#-funktionen">Funktionen</a>
+  <a href="#funktionen">Funktionen</a>
   ·
-  <a href="#-14-tage-verlauf">Verlauf</a>
+  <a href="#konnektor-anbindung">Konnektor</a>
   ·
-  <a href="#-schnellstart">Start</a>
+  <a href="#installation">Installation</a>
   ·
-  <a href="#-für-entwickler">Entwickler</a>
+  <a href="#sicherheit--datenschutz">Sicherheit</a>
   ·
-  <a href="https://git.jimmybones.de/jimmybones/TILageMonitor">🪞 Forgejo-Mirror</a>
+  <a href="#faq--fehlerbehebung">FAQ</a>
+  ·
+  <a href="https://git.jimmybones.de/jimmybones/TILageMonitor">Forgejo-Mirror</a>
 </p>
 
 > [!IMPORTANT]
 > **Kein offizielles gematik-Produkt.** TI-Lage Monitor ist eine unabhängige Community-App von Randy Carter (R.C.). Maßgeblich bleibt das [gematik Fachportal TI-Status](https://fachportal.gematik.de/ti-status#TI-Anschluss).
 
-## 📸 Auf einen Blick
+## Auf einen Blick
 
 | Hellmodus | Dunkelmodus |
 |:---:|:---:|
 | ![Hauptfenster Hellmodus](docs/assets/screenshot-light.png) | ![Hauptfenster Dunkelmodus](docs/assets/screenshot-dark.png) |
 
-TI-Lage Monitor zeigt den aktuellen Status von **7 TI-Diensten** als Tray-Ampel und im Fluent-Hauptfenster — inkl. Meldungen, Toasts und einem ruhigen **14-Tage-Verlauf**. Alles läuft **lokal** auf Windows, ohne Login und ohne Cloud. **X** / Minimieren → Tray (Monitoring weiter); nur **Beenden** beendet die App.
+TI-Lage Monitor zeigt den aktuellen Status von **sieben TI-Diensten** als Tray-Ampel und im Fluent-Hauptfenster — inklusive Meldungen, Toasts und einem **14-Tage-Verlauf**. Optional kommt die **lokale Konnektor-Anbindung** hinzu (SDS, VPN TI/SIS, Karten, Terminals, PIN-Status, Live-Ereignisse). Alles läuft **lokal** auf Windows, ohne Login und ohne Cloud.
 
-## 💡 Warum TI-Lage Monitor?
+**X** oder Minimieren legt die App in den Tray (Monitoring läuft weiter). Nur **Beenden** beendet sie.
 
-- **Lokal & privat** — öffentliche gematik-APIs, kein Account, keine Sync-Cloud
+## Warum TI-Lage Monitor?
+
+- **Lokal und privat** — öffentliche gematik-APIs, kein Account, keine Sync-Cloud
 - **Immer im Blick** — Tray-Ampel und Toasts, ohne einen Portal-Tab offen zu lassen
-- **14-Tage-Verlauf** — Übersicht, Stunden und Ereignisse auf einer Datenbasis
+- **14-Tage-Verlauf** — Übersicht, Stunden und Ereignisse auf einer Datenbasis; Störungsbericht als CSV
+- **Konnektor optional** — Inventar und Überwachung im lokalen Netz, nach gemSpec_Kon
 - **Aktuell bleiben** — GitHub-Releases mit SHA-256-Prüfung und optionaler Auto-Installation
 
-## ✨ Funktionen
+## Funktionen
 
 | | Funktion | Nutzen |
 | :--: | --- | --- |
 | 🛡️ | **Tray-Ampel** | Grün / Amber / Rot / Keine Daten im Infobereich |
 | 🔎 | **7 TI-Dienste** | eRezept, ePA, KIM, WANDA, OGD, VSDM, TI-Anschluss |
-| 🔔 | **Windows-Toasts** | Klickbare Benachrichtigungen mit Kontextsprung |
+| 🔔 | **Windows-Toasts** | Klickbare Benachrichtigungen mit Kontextsprung; Filter global und pro Dienst |
 | 📈 | **14-Tage-Verlauf** | Übersicht · Stunden · Ereignisse — KPI, Fokus-Chips, Timeline |
-| ⬇️ | **GitHub-Updates** | Releases prüfen, SHA-256 verifizieren, optional still installieren |
-| 🎨 | **Fluent UI** | Hell-/Dunkelmodus, Autostart, Start direkt in den Tray |
-| ⚙️ | **Notify-Filter** | Pro Dienst und global aus dem Tray steuerbar |
+| 📄 | **CSV-Störungsbericht** | Aus dem Verlaufsfenster: Semikolon-CSV, UTF-8 mit BOM, für Excel |
+| 💬 | **Meldungen** | Aktuelle Störungen und Hinweise im Hauptfenster, mit umbrechendem Langtext |
+| 🔌 | **Konnektor-Anbindung** | SDS, VPN TI/SIS, Karten, Terminals, Zertifikate, PIN-Status, CETP-Ereignisse |
+| ⬇️ | **Update-Prüfung** | GitHub-Releases prüfen, SHA-256 verifizieren, optional still installieren |
+| 🎨 | **Fluent-Oberfläche** | Hell-/Dunkelmodus, Sprache, Autostart, Start in den Tray |
+| ⚙️ | **Einstellungen** | Karten für Sprache, Darstellung, Start, Updates, Benachrichtigungen und Konnektor |
 
 **Statusfarben**
 
@@ -72,97 +80,123 @@ TI-Lage Monitor zeigt den aktuellen Status von **7 TI-Diensten** als Tray-Ampel 
 | 🔴 **Rot** | Vollausfall oder kritische Störung |
 | ⚪ **Keine Daten** | API nicht erreichbar oder noch kein Abruf |
 
-Lage (tilage **v2**), Incidents (**v1**) und Outages (**v1**) von `ti-lage.prod.ccs.gematik.solutions` — Abrufe im gematik-Rhythmus mit Offset (`:01`, `:06`, `:11`, …). Nach **drei aufeinanderfolgenden** API-Fehlern: dauerhaft **API down**.
+Lage (tilage **v2**), Incidents (**v1**) und Outages (**v1**) kommen von `ti-lage.prod.ccs.gematik.solutions`. Abrufe folgen dem gematik-Rhythmus mit Offset (`:01`, `:06`, `:11`, …). Nach **drei aufeinanderfolgenden** API-Fehlern gilt die API dauerhaft als nicht erreichbar, bis wieder ein Abruf gelingt.
 
-## 🚀 Schnellstart
+## Installation
 
-1. [Neueste Version herunterladen](https://github.com/JImmyB0nes/TILageMonitor/releases/latest) (`TILageMonitor-*-Setup.exe`).
-2. Setup starten und Installation abschließen.
-3. Optional: Autostart, Theme und Sprache unter **Einstellungen**.
+1. Die [neueste Version](https://github.com/JImmyB0nes/TILageMonitor/releases/latest) herunterladen (`TILageMonitor-*-Setup.exe`) und die SHA-256-Prüfsumme (`checksums.txt`) vergleichen.
+2. Das Setup starten und die Installation abschließen.
+3. Optional unter **Einstellungen** Autostart, Theme, Sprache, Updates und Konnektor festlegen.
 
 > [!TIP]
-> Der Installer ist offline und bringt .NET 10 sowie Windows App SDK mit. Unter **Einstellungen → Updates** lässt sich die optionale stille Auto-Installation aktivieren; der Download wird per **SHA-256** geprüft (nur GitHub-URLs).
+> Der Installer ist offline und bringt .NET 10 sowie das Windows App SDK mit (win-x64, self-contained). Unter **Einstellungen → Updates** lässt sich die optionale stille Auto-Installation aktivieren. Downloads stammen nur von GitHub-Adressen und werden per **SHA-256** geprüft.
 
 > [!WARNING]
-> Die EXE ist derzeit **unsigniert**. Windows SmartScreen kann warnen. Details und Signatur-Plan: [SIGNING.md](SIGNING.md).
+> Die EXE ist derzeit **unsigniert**, sofern im Release-Workflow kein Signaturzertifikat hinterlegt ist. Windows SmartScreen kann warnen. Details und Signatur-Plan: [SIGNING.md](SIGNING.md).
 
-## 🖱️ Bedienung
+### Bedienung
 
 | Aktion | Wirkung |
 | --- | --- |
-| Linksklick Tray-Icon | Hauptfenster ein-/ausblenden |
-| Schließen (X) / Minimieren | Nur in den Tray (Monitoring weiter) |
+| Linksklick auf das Tray-Icon | Hauptfenster ein- oder ausblenden |
+| Schließen (X) / Minimieren | Nur in den Tray (Monitoring läuft weiter) |
 | Rechtsklick → Benachrichtigungen | Toasts global an/aus |
-| **Aktualisieren** | Status sofort neu laden |
-| **Verlauf** | 14-Tage-Historie (maximiert) |
-| **Einstellungen** | Theme, Sprache, Autostart, Updates, Filter |
+| **Aktualisieren** | TI-Status sofort neu laden |
+| **Verlauf** | 14-Tage-Historie (CSV-Export im Verlaufsfenster) |
+| **Konnektor** | Konnektor-Fenster öffnen |
+| **Einstellungen** | Sprache, Theme, Autostart, Updates, Filter, Konnektor-Verhalten |
 | **gematik** | Fachportal im Browser |
 | **Beenden** | App beenden |
 
-## 📈 14-Tage-Verlauf
+## 14-Tage-Verlauf
 
-Drei Segmente auf derselben Datenbasis: **Übersicht | Stunden | Ereignisse**. v2.x behandelt den Verlauf als First-Class-Feature — ruhige KPI, Fokus-Layout und klare Timelines.
+Drei Segmente auf derselben Datenbasis: **Übersicht | Stunden | Ereignisse**.
 
 | Baustein | Inhalt |
 | --- | --- |
-| **KPI** | **Heute** · **14 Tage** (auffällige Tage) · **Verfügbarkeit %** |
-| **Fokus-Chips** | Alle Dienste oder ein Dienst — Zeilen bzw. große Tages-Kacheln |
-| **Timeline** | Karten mit Status-Balken; Klick zoomt in Stunden / markiert Ereignisse |
-| **Quellen** | gematik Incidents/Outages (auch bei ausgeschaltetem PC) + lokale Snapshots (`history.json`) für Online-Stunden |
-| **Leer/OK** | „Alles ruhig“ statt leerer Listen; Hell/Dunkel aktualisiert live |
+| **KPI** | Heute · 14 Tage (auffällige Tage) · Verfügbarkeit % |
+| **Fokus-Chips** | Alle Dienste oder ein Dienst — Zeilen bzw. große Tageskacheln |
+| **Timeline** | Karten mit Status-Balken; Klick zoomt in Stunden bzw. markiert Ereignisse |
+| **CSV-Export** | Störungsbericht als Semikolon-CSV (UTF-8 mit BOM) |
+| **Quellen** | gematik Incidents/Outages (auch bei ausgeschaltetem PC) und lokale Snapshots (`history.json`) für Online-Stunden |
 
 > [!NOTE]
-> Graue Kacheln/Stunden = weder lokaler Snapshot noch API-Meldung (zukünftige Stunden bleiben grau). Bei erreichbarer Incident-API gelten begonnene Stunden ohne Störung als verfügbar (grün).
+> Graue Kacheln oder Stunden bedeuten: weder lokaler Snapshot noch API-Meldung (zukünftige Stunden bleiben grau). Bei erreichbarer Incident-API gelten begonnene Stunden ohne Störung als verfügbar (grün).
 
-| Tipps | Wirkung |
+| Tipp | Wirkung |
 | --- | --- |
 | Filter-Chip | Zeilen und Ereignisse eingrenzen |
-| Tages-Kachel | Stunden-Zoom |
+| Tageskachel | Stunden-Zoom |
 | Ereignis / auffällige Stunde | Zoom bzw. Segment **Ereignisse** |
-| Esc / Zurück | Zurück zur Tages-Übersicht |
+| Esc / Zurück | Zurück zur Tagesübersicht |
 
-## 🔌 Konnektor-Anbindung (Vorabversion)
+## Konnektor-Anbindung
 
-Optional liest die App den **lokalen TI-Konnektor** direkt aus (SOAP-Schnittstellen nach gemSpec_Kon) – erreichbar über **🔌 Konnektor** im Hauptfenster oder im Tray-Menü.
+Optional liest die App den **lokalen TI-Konnektor** über die SOAP-Schnittstellen nach [gemSpec_Kon](https://fachportal.gematik.de/) / api-telematik OPB5 aus. Das gilt für Konnektoren dieses Vertragsstands — typischerweise **RISE**, **secunet** und **KoCoBox**. Die Einrichtung liegt unter **Konnektor** im Hauptfenster, im Tray-Menü oder über **Einstellungen**.
 
-**Einrichtung:** IP-Adresse (optional mit Port), Client-Zertifikat (`.p12`/`.pfx`) samt Passwort sowie Mandant-, Clientsystem- und Arbeitsplatz-ID aus dem Infomodell der Konnektor-Administration. Optional Basic-Auth. Beim ersten Verbinden wird der SHA-256-Fingerprint des Konnektor-TLS-Zertifikats angezeigt und nach Bestätigung gepinnt.
+Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf, Ereignisse). PIN-Aktionen startet nur, wer sie ausdrücklich im Konnektor-Fenster anstößt; PIN und PUK werden **ausschließlich am Kartenterminal** eingegeben und die App sieht sie nie. Ein automatisches Auslesen der eGK-Versichertendaten (`ReadVSD`) findet nicht statt.
 
-**Ausgelesen wird:**
+### Was ausgelesen wird
 
 | Bereich | Quelle | Inhalt |
 | --- | --- | --- |
-| Konnektor | `connector.sds` | Hersteller, Produkt, PTV, Firmware/Hardware, angebotene Dienste + Versionen |
-| Betriebszustand | `EventService.GetResourceInformation` | VPN TI / SIS online/offline, aktive Fehlerzustände (`EC_*`) |
+| Konnektor | `connector.sds` | Hersteller, Produkt, PTV, Firmware/Hardware, angebotene Dienste und Versionen, TLS-Pflicht |
+| Betriebszustand | `EventService.GetResourceInformation` | VPN TI und VPN SIS online/offline, aktive Fehlerzustände (`EC_*`) |
 | Kartenterminals | `EventService.GetCardTerminals` | Name, CtId, IP, MAC, Slots, verbunden ja/nein |
-| Karten | `EventService.GetCards` | SMC-B, HBA, eGK, gSMC-KT: Inhaber, ICCSN, Slot, Steckzeit, Ablaufdatum |
-| PIN-Status | `CardService.GetPinStatus` | verifiziert / Transport-PIN / gesperrt, Restversuche |
-| Zertifikate | `CertificateService.ReadCardCertificate` | C.AUT: Ablauf, Aussteller, **Telematik-ID**, Rolle |
+| Karten | `EventService.GetCards` | SMC-B / SM-B / HSM-B, HBA, eGK, gSMC-KT: Inhaber, ICCSN, Slot, Ablaufdatum |
+| PIN-Status | `CardService.GetPinStatus` | verifiziert, Transport-PIN, gesperrt, deaktiviert, Restversuche |
+| Zertifikate | `CertificateService.ReadCardCertificate` | C.AUT, C.ENC, C.SIG, C.QES: Ablauf, Aussteller, Telematik-ID, Rolle |
+| Live-Ereignisse | EventService-Abo + **CETP** | `CARD/INSERTED`, `CARD/REMOVED`, `CT/CONNECTED`, `CT/DISCONNECTED`, `CERT/CARD/STATUS` |
 
-**Aktionen (SMC-B / HBA):** PIN verifizieren (SMC-B freischalten), PIN bzw. Transport-PIN ändern, mit PUK entsperren, Zertifikat online prüfen (OCSP via `VerifyCertificate`). **PIN und PUK werden ausschließlich am Kartenterminal eingegeben** – die App sieht sie nie.
+**TLS:** Der HTTPS-Zugang zum Konnektor nutzt BouncyCastle (TLS 1.2, optional 1.3) mit **Brainpool** (P-256/P-384/P-512) und **RSA** bzw. NIST-Kurven. Das Clientsystem-Zertifikat (P12) wird nur im Speicher gehalten; die Kette geht vollständig mit. Beim ersten Verbinden wird der SHA-256-Fingerprint des Konnektor-Zertifikats angezeigt und nach Bestätigung **gepinnt**. Ist TLS im SDS oder in den Einstellungen vorgeschrieben, läuft auch die Ereignissenke über TLS (CETP1: die App ist TLS-Server, der Konnektor TLS-Client).
 
-**Hintergrundüberwachung (Toasts):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Kartenterminal getrennt, keine SMC-B gesteckt, SMC-B nicht freigeschaltet, PIN gesperrt/Transport-PIN, Kartenzertifikat läuft ab (Schwelle einstellbar, Standard 60 Tage).
+**Hintergrund-Toasts (abschaltbar):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Terminal getrennt, keine SMC-B gesteckt, SMC-B nicht freigeschaltet, PIN gesperrt oder Transport-PIN, Kartenzertifikat läuft ab (Schwelle einstellbar, Standard 60 Tage).
 
-**Diagnose:** „Bericht kopieren“ erzeugt einen Text ohne Passwörter für den Support/DVO.
+**Aktionen an SMC-B und HBA** (nur auf Knopfdruck): PIN verifizieren, PIN bzw. Transport-PIN ändern, mit PUK entsperren, Zertifikat online prüfen (OCSP). Enable/Disable der PIN nur, wenn der Konnektor CardService 8.2 oder höher anbietet. HBA-qSig und vergleichbare Vorläufer zeigen typischerweise nur PIN.QES.
 
-**Falls Karten und Terminals leer bleiben (`4000: Syntaxfehler`):** dieser Fehler kommt fast nie vom Request-Aufbau, sondern vom **Aufrufkontext**. Konnektoren (besonders RISE) akzeptieren für Mandant-, Clientsystem- und Arbeitsplatz-ID ausschließlich `A-Z`, `a-z`, `0-9`, `-` und `_` (1–64 Zeichen) – Punkte, Leerzeichen, Tabulatoren, Umlaute oder zu viele Zeichen quittieren sie pauschal mit 4000, und dann schlägt gleich die gesamte EventService-Abfrage fehl. Die App prüft die IDs deshalb beim Speichern, wiederholt automatisch testweise ohne Benutzer-ID bzw. ohne Mandanten-Radius und gibt im Log den tatsächlich gesendeten Request aus.
+<details>
+<summary><strong>Einrichtung Schritt für Schritt</strong></summary>
 
-Zertifikats- und Basic-Auth-Passwörter werden mit Windows-DPAPI (nur aktueller Benutzer) in `settings.json` gespeichert.
+1. **Konnektor-Fenster öffnen** (Schaltfläche im Hauptfenster, Tray oder Einstellungen).
+2. **Adresse eintragen:** IP oder Hostname, optional mit Port (z. B. `192.168.1.10` oder `10.0.0.5:8443`). TLS (https) bleibt in der Regel eingeschaltet.
+3. **Clientzertifikat:** die `.p12`/`.pfx`-Datei des Clientsystems und das Passwort. Das Zertifikat muss in der Konnektor-Administration für dieses Clientsystem hinterlegt sein.
+4. **Aufrufkontext** aus dem Infomodell: **Mandant-ID**, **Clientsystem-ID**, **Arbeitsplatz-ID**. Die Benutzer-ID ist optional (häufig für HBA-Operationen). Laut XSD höchstens 64 Zeichen. Viele Konnektoren (insbesondere RISE) akzeptieren faktisch nur `A-Z`, `a-z`, `0-9`, `-` und `_` — Punkte oder Leerzeichen warnt die App, blockiert das Speichern aber nicht; der Konnektor kann trotzdem mit `4000 Syntaxfehler` antworten.
+5. **Freigaben im Infomodell:** Clientsystem und Arbeitsplatz müssen existieren, das Clientsystem-Zertifikat muss zugeordnet sein, und der Arbeitsplatz darf die benötigten Dienste (EventService, CardService, CertificateService) nutzen.
+6. **Speichern und verbinden.** Beim ersten TLS-Handshake erscheint der Fingerprint — mit der Anzeige in der Konnektor-Administration vergleichen und nur dann **vertrauen**.
+7. **Ereignis-Abos** (optional): Die App lauscht auf einem lokalen TCP-Port ab **48150** (bei Belegung die nächsten freien Ports). Die Windows-Firewall muss eingehende Verbindungen **vom Konnektor** auf diesen Port erlauben. Die Senke akzeptiert nur die aufgelöste Konnektor-IP. Ohne Abo pollt die App im eingestellten Intervall (Standard 5 Minuten).
+8. Unter **Einstellungen** oder im Reiter **Verbindung** lassen sich Überwachung, Ereignis-Abos, lokaler Konnektor-Verlauf (14 Tage) und die Warnfrist für Zertifikate steuern.
 
-## 🔐 Daten & Datenschutz
+Das Diagnose-Protokoll und **Bericht kopieren** erzeugen einen Text **ohne Passwörter**.
 
-- Nur öffentliche gematik-APIs — **kein Login, kein API-Key** (Konnektor-Anbindung optional und nur im lokalen Netz)
+</details>
+
+<details>
+<summary><strong>Wenn Karten oder Terminals leer bleiben (4000 Syntaxfehler)</strong></summary>
+
+Dieser Fehler kommt fast nie vom SOAP-Aufbau, sondern vom **Aufrufkontext**. Stimmen Mandant, Clientsystem oder Arbeitsplatz nicht mit der Administration überein oder enthalten sie Zeichen, die die Firmware ablehnt, schlägt die EventService-Abfrage insgesamt fehl. Die App wiederholt testweise ohne Benutzer-ID (das Ergebnis wird gemerkt) und ohne Mandanten-Radius und schreibt den gesendeten Request ins Protokoll. Die IDs bitte Zeichen für Zeichen mit der Konnektor-Administration vergleichen.
+
+</details>
+
+## Sicherheit und Datenschutz
+
+- Für den TI-Status nur öffentliche gematik-APIs — **kein Login, kein API-Key**
+- Die Konnektor-Anbindung bleibt im **lokalen Netz**; Passwörter liegen mit Windows-DPAPI (nur aktueller Benutzer) in `settings.json`
+- Der private Schlüssel der P12-Datei wird nur im Speicher gehalten, nicht in den Windows-Zertifikatsspeicher importiert
+- Der CETP-Listener nimmt ausschließlich Verbindungen der Konnektor-Adresse an
 - Keine Cloud-Synchronisation
-- Lokal unter `%AppData%\TILageMonitor\`
-- Updates nur von allowlisted GitHub-Hosts (`github.com`, `*.githubusercontent.com`)
+- Updates nur von allowlisted GitHub-Hosts (`github.com`, `*.githubusercontent.com`), Prüfung per SHA-256
+
+Lokal unter `%AppData%\TILageMonitor\`:
 
 | Datei | Inhalt |
 | --- | --- |
 | `settings.json` | Theme, Sprache, Autostart, Notify-Filter, Updates, Konnektor-Zugang (Passwörter DPAPI-verschlüsselt) |
-| `last-lage.json` | Offline-Cache des letzten Stands |
-| `history.json` | Stündliche lokale Ergänzung zum Verlauf |
+| `last-lage.json` | Offline-Cache des letzten TI-Stands |
+| `history.json` | Stündliche lokale Ergänzung zum TI-Verlauf |
+| `connector-history.json` | Optionaler lokaler Konnektor-Verlauf (14 Tage) |
 
 <details>
-<summary><strong>API-Endpunkte</strong></summary>
+<summary><strong>API-Endpunkte (gematik TI-Status)</strong></summary>
 
 - `https://ti-lage.prod.ccs.gematik.solutions/lageapi/v2/tilage`
 - `https://ti-lage.prod.ccs.gematik.solutions/lageapi/v1/tistatus/incident`
@@ -170,16 +204,68 @@ Zertifikats- und Basic-Auth-Passwörter werden mit Windows-DPAPI (nur aktueller 
 
 </details>
 
-## ⚠️ Bekannte Grenzen
+## FAQ und Fehlerbehebung
 
-- Nur Windows **x64** (10 / 11)
-- Unsignierte EXE → mögliche SmartScreen-Warnung ([SIGNING.md](SIGNING.md))
-- API deckt Störungen bis 14 Tage ab; vollständige OK-Verfügbarkeit braucht lokale Snapshots
-- Ergänzt das Fachportal — ersetzt es nicht
+<details>
+<summary><strong>Windows SmartScreen warnt vor der Installation</strong></summary>
 
-## 🗂️ Für Entwickler
+Die aktuelle Release-EXE ist typischerweise **unsigniert** (kein hinterlegtes Authenticode-Zertifikat). Unter „Weitere Informationen“ kann die Ausführung trotzdem zugelassen werden, wenn die Quelle dieses Repository und die SHA-256-Summe in `checksums.txt` stimmen. Hintergrund und Signatur-Plan: [SIGNING.md](SIGNING.md).
 
-**Voraussetzungen:** Windows 10/11 x64 · [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) · PowerShell 5.1+
+</details>
+
+<details>
+<summary><strong>TLS-Fehler beim Konnektor („keine gemeinsame Cipher-Suite/Kurve“, Handshake schlägt fehl)</strong></summary>
+
+- Clientzertifikat (P12) und Passwort prüfen; Brainpool- und RSA-Zertifikate werden unterstützt.
+- Das Zertifikat muss im Konnektor für genau dieses Clientsystem hinterlegt sein.
+- TLS (https) einschalten, wenn der Konnektor TLS vorschreibt (`TLSMandatory` in `connector.sds`).
+- Den gepinnten Fingerprint unter **Vertrauen zurücksetzen** entfernen, falls das Konnektor-Zertifikat erneuert wurde, und erneut vergleichen.
+- Adresse und Port prüfen; der Arbeitsplatz muss den Konnektor im Netz erreichen.
+
+</details>
+
+<details>
+<summary><strong>Ereignisse (Karte rein/raus) kommen nicht an</strong></summary>
+
+- Ereignis-Abos in den Einstellungen einschalten und einmal neu verbinden.
+- In der Windows-Firewall eingehende TCP-Verbindungen vom Konnektor auf Port **48150** (oder den im Protokoll genannten Folgeport) erlauben.
+- Im Konnektor-Fenster unter **Ereignisse** prüfen, ob Abos dieser App stehen. Schlägt das Abo fehl, pollt die App weiter im Intervall.
+
+</details>
+
+<details>
+<summary><strong>Die App startet nicht oder der TI-Status bleibt leer</strong></summary>
+
+Windows 10 oder 11 **x64** wird benötigt (siehe Systemanforderungen). Liegt die gematik-API nicht an, bleibt der letzte Stand aus `last-lage.json` sichtbar, sobald einer vorhanden ist. „Aktualisieren“ erzwingt einen neuen Versuch.
+
+</details>
+
+## Systemanforderungen
+
+| | |
+| --- | --- |
+| Betriebssystem | Windows 10 oder 11, **64-Bit** (x64), ab Windows 10 Version 1809 |
+| Architektur | win-x64 (kein ARM, kein 32-Bit) |
+| Laufzeit | Im Installer enthalten (.NET 10 und Windows App SDK, self-contained) |
+| Netz | Internetzugang für den gematik-TI-Status; LAN-Zugang zum Konnektor nur bei Nutzung der Konnektor-Anbindung |
+| Entwicklung | [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), PowerShell 5.1+ |
+
+## Changelog
+
+Neue Versionen und Installer stehen unter [Releases](https://github.com/JImmyB0nes/TILageMonitor/releases). Eine stabile Version ersetzt die gleichnummerierte Vorabversion (z. B. 3.0.0 nach einer 3.0.0-beta).
+
+## Lizenz
+
+Veröffentlicht unter der [MIT-Lizenz](LICENSE). Copyright © 2026 Randy Carter.
+
+## Sprache / Language
+
+**DE:** Unter **Einstellungen → Sprache** stehen **Automatisch (Windows)** · **Deutsch** · **Englisch**. Die Auswahl greift nach einem **Neustart** der App.
+
+**EN:** Under **Settings → Language** choose **Automatic (Windows)** · **German** · **English**. The selection takes effect after **restarting** the app.
+
+<details>
+<summary><strong>Für Entwickler</strong></summary>
 
 ```powershell
 git clone https://github.com/JImmyB0nes/TILageMonitor.git
@@ -190,27 +276,22 @@ cd TILageMonitor
 
 | Bereich | Dateien |
 | --- | --- |
-| UI & Tray | `MainWindow.*`, `App.xaml(.cs)` |
-| API & Modelle | `ApiClient.cs`, `Models.cs`, `TiStatusClassifier.cs` |
+| UI und Tray | `MainWindow.*`, `App.xaml(.cs)` |
+| API und Modelle | `ApiClient.cs`, `Models.cs`, `TiStatusClassifier.cs` |
 | Persistenz | `*Store.cs`, `AtomicJsonStore.cs` |
-| Verlauf | `HistoryWindow.*`, `HistoryTimelineBuilder.cs` |
+| Verlauf | `HistoryWindow.*`, `HistoryTimelineBuilder.cs`, `IncidentReportExporter.cs` |
+| Konnektor | `Connector*.cs`, `CertificatePinning.cs` |
 | Fenster / System | `SettingsWindow.*`, `AboutWindow.*`, `ToastService.cs`, `ThemeService.cs`, `AutostartService.cs`, `UpdateService.cs`, `LocalizationService.cs` |
 | Build / Release | `Build.ps1`, `Install.ps1`, `installer/`, `.github/workflows/` |
 
 **Stack:** WPF + WinForms-Tray · `net10.0-windows` · Windows App SDK Toasts · Inno Setup · MIT
 
+</details>
+
 ---
-
-## 🌐 Sprache / Language
-
-**DE:** Unter **Einstellungen → Sprache** wählen Sie **Automatisch (Windows)** · **Deutsch** · **Englisch**. Die Auswahl greift nach einem **Neustart** der App.
-
-**EN:** Under **Settings → Language** choose **Automatic (Windows)** · **German** · **English**. The selection takes effect after **restarting** the app.
-
-## 👤 Autor
 
 **Randy Carter** (R.C.) · © 2026 · Community-App, nicht gematik
 
 <p align="center">
-  <sub>Für Praxen &amp; IT, die den TI-Status im Blick behalten — ohne einen Portal-Tab offen zu lassen.</sub>
+  <sub>Für Praxen und IT, die TI-Status und Konnektor im Blick behalten — ohne einen Portal-Tab offen zu lassen.</sub>
 </p>
