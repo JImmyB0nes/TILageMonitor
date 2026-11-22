@@ -378,7 +378,10 @@ public static class LocalizationService
         ["Terminal getrennt"] = "Terminal disconnected",
         ["Terminal verbunden"] = "Terminal connected",
         ["Karten:"] = "Cards:",
-        ["Verlauf lokal speichern (14 Tage)"] = "Store history locally (14 days)"
+        ["Verlauf lokal speichern (14 Tage)"] = "Store history locally (14 days)",
+        ["Konnektor-Karte ausblenden"] = "Hide connector card",
+        ["Konnektor-Karte im Hauptfenster anzeigen"] = "Show connector card in main window",
+        ["Gilt, solange kein Konnektor eingerichtet ist. Ein eingerichteter Konnektor wird immer angezeigt."] = "Applies while no connector is set up. A configured connector is always shown."
     };
 
     /// <summary>

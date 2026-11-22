@@ -240,6 +240,13 @@
                                   Margin="0,0,0,10"
                                   Checked="ConnectorSetting_Changed"
                                   Unchecked="ConnectorSetting_Changed"/>
+                        <CheckBox x:Name="ConnectorCardToggle"
+                                  Content="Konnektor-Karte im Hauptfenster anzeigen"
+                                  ToolTip="Gilt, solange kein Konnektor eingerichtet ist. Ein eingerichteter Konnektor wird immer angezeigt."
+                                  Style="{DynamicResource ThemeAwareCheckBoxStyle}"
+                                  Margin="0,0,0,10"
+                                  Checked="ConnectorCard_Changed"
+                                  Unchecked="ConnectorCard_Changed"/>
                         <TextBlock Text="Konnektor-Benachrichtigungen" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{DynamicResource TextMain}" Margin="0,2,0,6"/>
                         <CheckBox x:Name="ConnectorCertExpiryToggle"

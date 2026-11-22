@@ -31,6 +31,9 @@ public partial class MainWindow
         UpdateConnectorButton();
     }
 
+    /// <summary>Karte nach einer Einstellungsaenderung neu bewerten.</summary>
+    public void RefreshConnectorCard() => UpdateConnectorButton();
+
     private void Connector_Click(object sender, RoutedEventArgs e) => OpenConnectorWindow();
 
     public void OpenConnectorWindow()
@@ -101,6 +104,15 @@ public partial class MainWindow
         OpenConnectorWindow();
     }
 
+    /// <summary>X auf der Konnektor-Karte: ausblenden und merken. Wieder einblenden in den Einstellungen.</summary>
+    private void ConnectorCardClose_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        _settings.Connector.ShowMainWindowCard = false;
+        SettingsStore.Save(_settings);
+        UpdateConnectorButton();
+    }
+
     private void ConnectorCard_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key is System.Windows.Input.Key.Enter or System.Windows.Input.Key.Space)
@@ -113,6 +125,15 @@ public partial class MainWindow
     private void UpdateConnectorCard(ConnectorSettings settings, ConnectorMonitor monitor, string tooltip)
     {
         if (ConnectorStatusCard is null || ConnectorCardTitle is null)
+            return;
+
+        // Eingerichtet: immer sichtbar, ohne X. Nicht eingerichtet: sichtbar mit X, bis der
+        // Nutzer sie ausblendet. Collapsed statt Hidden, damit die Dienste-Karte nachrueckt.
+        var show = ConnectorCardVisibility.ShouldShow(settings);
+        ConnectorStatusCard.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (ConnectorCardCloseButton is not null)
+            ConnectorCardCloseButton.Visibility = ConnectorCardVisibility.ShowCloseButton(settings) ? Visibility.Visible : Visibility.Collapsed;
+        if (!show)
             return;
 
         ConnectorStatusCard.ToolTip = tooltip;
