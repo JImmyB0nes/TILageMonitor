@@ -108,6 +108,13 @@ public sealed class ConnectorSettings
     [JsonPropertyName("toastForHba")]
     public bool ToastForHba { get; set; } = true;
 
+    /// <summary>
+    /// Konnektor-Karte im Hauptfenster anzeigen, solange kein Konnektor eingerichtet ist (per X
+    /// ausblendbar). Ein eingerichteter Konnektor wird unabhängig davon immer angezeigt.
+    /// </summary>
+    [JsonPropertyName("showMainWindowCard")]
+    public bool ShowMainWindowCard { get; set; } = true;
+
     [JsonIgnore]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Host) &&

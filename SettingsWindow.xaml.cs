@@ -254,6 +254,7 @@ public partial class SettingsWindow : Window
         ConnectorHistoryToggle.IsChecked = c.HistoryEnabled;
         ConnectorPollBox.Text = c.PollMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
         ConnectorWarnBox.Text = c.CertificateWarningDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ConnectorCardToggle.IsChecked = c.ShowMainWindowCard;
         ConnectorCertExpiryToggle.IsChecked = c.NotifyCertificateExpiry;
         ConnectorPinStatusToggle.IsChecked = c.NotifyPinStatus;
         ToastCardRemovedToggle.IsChecked = c.ToastCardRemoved;
@@ -296,6 +297,17 @@ public partial class SettingsWindow : Window
         SettingsStore.Save(_settings);
         _ownerMain.ApplySettings(_settings);
         _ownerMain.ApplyConnectorSettings();
+    }
+
+    /// <summary>Konnektor-Karte im Hauptfenster wieder ein- bzw. ausblenden (ohne Monitor-Neustart).</summary>
+    private void ConnectorCard_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        _settings.Connector.ShowMainWindowCard = ConnectorCardToggle.IsChecked == true;
+        SettingsStore.Save(_settings);
+        _ownerMain.ApplySettings(_settings);
+        _ownerMain.RefreshConnectorCard();
     }
 
     private void ConnectorPoll_LostFocus(object sender, RoutedEventArgs e)

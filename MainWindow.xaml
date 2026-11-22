@@ -118,8 +118,19 @@
                             <WrapPanel x:Name="ConnectorCardChips"/>
                         </StackPanel>
                         <Button Grid.Column="2" x:Name="ConnectorCardOpenButton" Content="Öffnen"
-                                VerticalAlignment="Center" Margin="16,0,0,0" Padding="16,8"
+                                VerticalAlignment="Center" Margin="16,0,8,0" Padding="16,8"
                                 Click="Connector_Click" AutomationProperties.Name="Konnektor öffnen"/>
+                        <!-- X oben rechts: blendet die Karte aus (in den Einstellungen wieder einblendbar). -->
+                        <Button Grid.Column="2" x:Name="ConnectorCardCloseButton"
+                                Content="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10"
+                                Width="26" Height="26" Padding="0"
+                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-12,-12,0"
+                                Background="Transparent" BorderThickness="0"
+                                Foreground="{DynamicResource TextMuted}"
+                                Cursor="Hand"
+                                ToolTip="Konnektor-Karte ausblenden"
+                                AutomationProperties.Name="Konnektor-Karte ausblenden"
+                                Click="ConnectorCardClose_Click"/>
                     </Grid>
                 </Border>
 
