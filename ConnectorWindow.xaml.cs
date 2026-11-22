@@ -523,9 +523,9 @@ public partial class ConnectorWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 16)
         });
-        var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var no = new Button { Content = L("Abbrechen", "Cancel"), Padding = new Thickness(16, 8, 16, 8), MinWidth = 110, IsCancel = true, Margin = new Thickness(0, 0, 8, 0) };
-        var yes = new Button { Content = L("Vertrauen", "Trust"), Padding = new Thickness(16, 8, 16, 8), MinWidth = 110, IsDefault = true, Style = (Style)FindResource("AccentButtonStyle") };
+        var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
+        var no = new System.Windows.Controls.Button { Content = L("Abbrechen", "Cancel"), Padding = new Thickness(16, 8, 16, 8), MinWidth = 110, IsCancel = true, Margin = new Thickness(0, 0, 8, 0) };
+        var yes = new System.Windows.Controls.Button { Content = L("Vertrauen", "Trust"), Padding = new Thickness(16, 8, 16, 8), MinWidth = 110, IsDefault = true, Style = (Style)FindResource("AccentButtonStyle") };
         var accepted = false;
         yes.Click += (_, _) => { accepted = true; dialog.Close(); };
         no.Click += (_, _) => dialog.Close();
@@ -650,7 +650,7 @@ public partial class ConnectorWindow : Window
             Margin = new Thickness(0, 0, 8, 0),
             VerticalAlignment = VerticalAlignment.Center
         };
-        if (chip.Child is Panel panel)
+        if (chip.Child is System.Windows.Controls.Panel panel)
             panel.Children.Insert(0, dot);
         return chip;
     }
@@ -1091,7 +1091,7 @@ public partial class ConnectorWindow : Window
                 });
                 var barBg = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush("ChipBackground") };
                 var pct = Math.Clamp(left / 365.0, 0, 1);
-                var bar = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush(color), Width = Math.Max(4, 220 * pct), HorizontalAlignment = HorizontalAlignment.Left };
+                var bar = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush(color), Width = Math.Max(4, 220 * pct), HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
                 barBg.Child = bar;
                 body.Children.Add(barBg);
                 tile.Child = body;
@@ -1214,7 +1214,7 @@ public partial class ConnectorWindow : Window
                 Height = 4,
                 CornerRadius = new CornerRadius(2),
                 Background = Brush(color),
-                HorizontalAlignment = HorizontalAlignment.Left,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
                 Width = Math.Max(4, 140 * Math.Clamp(daysLeft / 365.0, 0, 1))
             };
             body.Children.Add(track);
