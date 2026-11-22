@@ -361,7 +361,24 @@ public static class LocalizationService
         ["Dienstverzeichnis (connector.sds)"] = "Service directory (connector.sds)",
         ["Protokoll"] = "Log",
         ["• Konnektor-Anbindung: Status, Karten, PIN-Verwaltung"] = "• Connector integration: status, cards, PIN management",
-        ["Einschränkung ·"] = "Restriction ·"
+        ["Einschränkung ·"] = "Restriction ·",
+
+        // 3.1: Konnektor-Verlauf, Benachrichtigungen, Zertifikate
+        ["Verlauf"] = "History",
+        ["Konnektor-Verlauf (14 Tage)"] = "Connector history (14 days)",
+        ["Erreichbarkeit, VPN zur TI und zum SIS sowie gesteckte Karten – lokal aufgezeichnet bei jedem Abruf. Kachel anklicken für die Stunden."] = "Reachability, VPN to TI and SIS and inserted cards – recorded locally on every poll. Click a tile for the hours.",
+        ["Noch kein Verlauf aufgezeichnet. Der Verlauf füllt sich mit jedem Abruf, solange „Verlauf lokal speichern“ in den Einstellungen aktiv ist."] = "No history recorded yet. The history fills up with every poll as long as “Store history locally” is enabled in the settings.",
+        ["C.AUT, C.ENC, C.SIG und C.QES der gesteckten Karten sowie das Clientsystem-Zertifikat. Warnstufen: 90, 30 und 7 Tage vor Ablauf."] = "C.AUT, C.ENC, C.SIG and C.QES of the inserted cards plus the client system certificate. Warning levels: 90, 30 and 7 days before expiry.",
+        ["Konnektor-Benachrichtigungen"] = "Connector notifications",
+        ["Zertifikatsablauf melden (90, 30 und 7 Tage vorher)"] = "Notify certificate expiry (90, 30 and 7 days before)",
+        ["PIN-Status melden (SMC-B nicht freigeschaltet, PIN gesperrt, letzter Versuch)"] = "Notify PIN status (SMC-B not unlocked, PIN blocked, last attempt)",
+        ["Toasts bei Ereignissen"] = "Toasts for events",
+        ["Karte entfernt"] = "Card removed",
+        ["Karte gesteckt"] = "Card inserted",
+        ["Terminal getrennt"] = "Terminal disconnected",
+        ["Terminal verbunden"] = "Terminal connected",
+        ["Karten:"] = "Cards:",
+        ["Verlauf lokal speichern (14 Tage)"] = "Store history locally (14 days)"
     };
 
     /// <summary>

@@ -80,6 +80,34 @@ public sealed class ConnectorSettings
     [JsonPropertyName("certificateWarningDays")]
     public int CertificateWarningDays { get; set; } = 60;
 
+    /// <summary>Toast, wenn ein SMC-B-, HBA- oder Clientsystem-Zertifikat in 90, 30 oder 7 Tagen abläuft.</summary>
+    [JsonPropertyName("notifyCertificateExpiry")]
+    public bool NotifyCertificateExpiry { get; set; } = true;
+
+    /// <summary>Toast bei SMC-B nicht verifiziert, PIN gesperrt oder nur noch einem Versuch.</summary>
+    [JsonPropertyName("notifyPinStatus")]
+    public bool NotifyPinStatus { get; set; } = true;
+
+    /// <summary>Ereignis-Toasts (CETP): welche Ereignisse …</summary>
+    [JsonPropertyName("toastCardRemoved")]
+    public bool ToastCardRemoved { get; set; } = true;
+
+    [JsonPropertyName("toastCardInserted")]
+    public bool ToastCardInserted { get; set; }
+
+    [JsonPropertyName("toastTerminalDisconnected")]
+    public bool ToastTerminalDisconnected { get; set; } = true;
+
+    [JsonPropertyName("toastTerminalConnected")]
+    public bool ToastTerminalConnected { get; set; }
+
+    /// <summary>… und für welche Karten (eGK wird nie gemeldet).</summary>
+    [JsonPropertyName("toastForSmcB")]
+    public bool ToastForSmcB { get; set; } = true;
+
+    [JsonPropertyName("toastForHba")]
+    public bool ToastForHba { get; set; } = true;
+
     [JsonIgnore]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Host) &&
