@@ -89,18 +89,43 @@ public static class ConnectorHistoryStore
 
     public static ConnectorHistoryFile Load()
     {
+        TryLoad(out var file);
+        return file;
+    }
+
+    /// <summary>
+    /// Laedt den Verlauf. False heisst: die Datei existiert, war aber gerade nicht lesbar
+    /// (gesperrt, z. B. Virenscanner/Backup). Dann darf NICHT gespeichert werden – sonst ersetzt
+    /// ein leerer Stand die 14 Tage Verlauf. Eine kaputte Datei wird beiseitegelegt
+    /// (.corrupt) und neu begonnen.
+    /// </summary>
+    internal static bool TryLoad(out ConnectorHistoryFile file) => TryLoad(HistoryPath, out file);
+
+    internal static bool TryLoad(string path, out ConnectorHistoryFile file)
+    {
+        file = new ConnectorHistoryFile();
+        if (!File.Exists(path))
+            return true;
+        string text;
         try
         {
-            if (!File.Exists(HistoryPath))
-                return new ConnectorHistoryFile();
-            var file = JsonSerializer.Deserialize<ConnectorHistoryFile>(File.ReadAllText(HistoryPath), JsonOptions)
-                       ?? new ConnectorHistoryFile();
-            file.Hours ??= new List<ConnectorHourSnapshot>();
-            return file;
+            text = File.ReadAllText(path);
         }
         catch
         {
-            return new ConnectorHistoryFile();
+            return false;
+        }
+        try
+        {
+            file = JsonSerializer.Deserialize<ConnectorHistoryFile>(text, JsonOptions) ?? new ConnectorHistoryFile();
+            file.Hours ??= new List<ConnectorHourSnapshot>();
+            return true;
+        }
+        catch
+        {
+            try { File.Copy(path, path + ".corrupt", overwrite: true); } catch { /* ignore */ }
+            file = new ConnectorHistoryFile();
+            return true;
         }
     }
 
@@ -131,7 +156,8 @@ public static class ConnectorHistoryStore
 
     private static ConnectorHistoryFile UpsertLocked(ConnectorSnapshot snapshot, DateTime now)
     {
-        var file = Load();
+        if (!TryLoad(out var file))
+            return file; // gesperrt – lieber eine Stunde auslassen als alles ueberschreiben
         Apply(file, snapshot, now);
         Prune(file, now.Date);
         Save(file);
@@ -145,7 +171,8 @@ public static class ConnectorHistoryStore
     {
         lock (Gate)
         {
-            var file = Load();
+            if (!TryLoad(out var file))
+                return file;
             ApplyUnreachable(file, now);
             Prune(file, now.Date);
             Save(file);

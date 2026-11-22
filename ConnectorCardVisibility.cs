@@ -18,4 +18,36 @@ public static class ConnectorCardVisibility
 
     /// <summary>X nur im Ausgangszustand (nicht eingerichtet).</summary>
     public static bool ShowCloseButton(ConnectorSettings settings) => !IsSetUp(settings);
+
+    /// <summary>Was die Karte (und die Konnektor-Schaltflaeche) zeigt.</summary>
+    public enum State
+    {
+        NotSetUp,
+        /// <summary>Eingerichtet, aber Hintergrundueberwachung aus – kein Datenstand zu erwarten.</summary>
+        MonitoringOff,
+        Querying,
+        Unreachable,
+        /// <summary>Konnektor erreichbar, lehnt aber ab (Konfiguration, Rechte, Zertifikat).</summary>
+        Rejected,
+        Ok
+    }
+
+    public static State Classify(ConnectorSettings settings, bool hasSnapshot, bool hasError, bool errorIsConfiguration)
+    {
+        if (!IsSetUp(settings))
+            return State.NotSetUp;
+        if (!settings.MonitoringEnabled)
+            return State.MonitoringOff;
+        if (hasError)
+            return errorIsConfiguration ? State.Rejected : State.Unreachable;
+        return hasSnapshot ? State.Ok : State.Querying;
+    }
+
+    /// <summary>"Erreichbar"-Chip: gruen/rot nur mit Befund, sonst neutral (kein falsches Rot).</summary>
+    public static bool? Reachable(State state) => state switch
+    {
+        State.Ok or State.Rejected => true,
+        State.Unreachable => false,
+        _ => null
+    };
 }

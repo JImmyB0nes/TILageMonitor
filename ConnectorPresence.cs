@@ -45,7 +45,7 @@ public sealed class ConnectorPresence
         {
             Inserted = inserted.Value,
             CardType = evt.Param("CardType") ?? "",
-            CtId = evt.Param("CtId") ?? evt.Param("CTId") ?? "",
+            CtId = evt.Param("CtID") ?? "",
             At = evt.ReceivedAt,
             ViaEvent = true
         };

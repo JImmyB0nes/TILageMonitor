@@ -255,6 +255,7 @@ public partial class SettingsWindow : Window
         ConnectorPollBox.Text = c.PollMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
         ConnectorWarnBox.Text = c.CertificateWarningDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
         ConnectorCardToggle.IsChecked = c.ShowMainWindowCard;
+        ConnectorPinManagementToggle.IsChecked = c.AllowPinManagement;
         ConnectorCertExpiryToggle.IsChecked = c.NotifyCertificateExpiry;
         ConnectorPinStatusToggle.IsChecked = c.NotifyPinStatus;
         ToastCardRemovedToggle.IsChecked = c.ToastCardRemoved;
@@ -310,16 +311,32 @@ public partial class SettingsWindow : Window
         _ownerMain.RefreshConnectorCard();
     }
 
+    /// <summary>PIN-Verwaltung im Konnektor-Fenster erlauben (ohne Monitor-Neustart).</summary>
+    private void ConnectorPinManagement_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        _settings.Connector.AllowPinManagement = ConnectorPinManagementToggle.IsChecked == true;
+        SettingsStore.Save(_settings);
+        _ownerMain.ApplySettings(_settings);
+        _ownerMain.RefreshConnectorWindow();
+    }
+
     private void ConnectorPoll_LostFocus(object sender, RoutedEventArgs e)
     {
         if (_initializing)
             return;
+        var beforePoll = _settings.Connector.PollMinutes;
+        var beforeDays = _settings.Connector.CertificateWarningDays;
         if (int.TryParse(ConnectorPollBox.Text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var poll))
             _settings.Connector.PollMinutes = Math.Clamp(poll, 1, 120);
         if (int.TryParse(ConnectorWarnBox.Text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var days))
             _settings.Connector.CertificateWarningDays = Math.Clamp(days, 1, 365);
         ConnectorPollBox.Text = _settings.Connector.PollMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
         ConnectorWarnBox.Text = _settings.Connector.CertificateWarningDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // Nur Fokuswechsel ohne Aenderung: nichts speichern, nichts neu starten.
+        if (beforePoll == _settings.Connector.PollMinutes && beforeDays == _settings.Connector.CertificateWarningDays)
+            return;
         SettingsStore.Save(_settings);
         _ownerMain.ApplySettings(_settings);
         _ownerMain.ApplyConnectorSettings();

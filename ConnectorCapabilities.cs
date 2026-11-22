@@ -47,6 +47,15 @@ public static class ConnectorCapabilities
 
     public static void SetOmitUserId(string host, bool value) => OmitUserId[host ?? ""] = value;
 
+    /// <summary>
+    /// Schluessel fuer "Benutzer-ID weglassen": Adresse UND die konkrete ID. Eine geaenderte
+    /// Benutzer-ID wird so neu probiert, statt fuer den Rest der Sitzung verschluckt zu werden.
+    /// </summary>
+    public static string OmitKey(string host, string? userId) => $"{host?.Trim()}|{userId?.Trim()}";
+
+    /// <summary>Nur das Mandanten-Radius-Wissen verwerfen – die uebrigen Erkenntnisse bleiben.</summary>
+    public static void ForgetMandantWide(string host) => MandantWide.TryRemove(host ?? "", out _);
+
     /// <summary>Alles, was über diese Adresse bekannt ist. Nach einem Umbau des Mandanten die
     /// saubere Rücksetzung, statt die App mit einer alten Vermutung laufen zu lassen.</summary>
     public static void Forget(string host)
@@ -54,6 +63,8 @@ public static class ConnectorCapabilities
         MandantWide.TryRemove(host ?? "", out _);
         EventNamespaces.TryRemove(host ?? "", out _);
         OmitUserId.TryRemove(host ?? "", out _);
+        foreach (var key in OmitUserId.Keys.Where(k => k.StartsWith((host ?? "").Trim() + "|", StringComparison.OrdinalIgnoreCase)).ToList())
+            OmitUserId.TryRemove(key, out _);
     }
 
 }

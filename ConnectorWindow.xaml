@@ -693,6 +693,8 @@
                                             <TextBlock Text="Passwort" Style="{StaticResource FieldLabelStyle}"/>
                                             <PasswordBox x:Name="CertPasswordBox"
                                                          ToolTip="Leer lassen, um das gespeicherte Passwort zu behalten"/>
+                                            <CheckBox x:Name="ClearCertPasswordToggle" Content="Gespeichertes Passwort entfernen"
+                                                      Style="{DynamicResource ThemeAwareCheckBoxStyle}" Margin="0,6,0,0"/>
                                         </StackPanel>
 
                                         <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3"
@@ -768,6 +770,8 @@
                                                 <TextBlock Text="Basic-Auth Passwort" Style="{StaticResource FieldLabelStyle}"/>
                                                 <PasswordBox x:Name="BasicPasswordBox"
                                                              ToolTip="Leer lassen, um das gespeicherte Passwort zu behalten"/>
+                                                <CheckBox x:Name="ClearBasicPasswordToggle" Content="Gespeichertes Passwort entfernen"
+                                                          Style="{DynamicResource ThemeAwareCheckBoxStyle}" Margin="0,6,0,0"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,0,0,10">

@@ -134,7 +134,7 @@ Drei Segmente auf derselben Datenbasis: **Übersicht | Stunden | Ereignisse**.
 
 Optional liest die App den **lokalen TI-Konnektor** über die SOAP-Schnittstellen nach [gemSpec_Kon](https://fachportal.gematik.de/) / api-telematik OPB5 aus. Das gilt für Konnektoren dieses Vertragsstands — typischerweise **RISE**, **secunet** und **KoCoBox**. Die Einrichtung liegt unter **Konnektor** im Hauptfenster, im Tray-Menü oder über **Einstellungen**.
 
-Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf, Ereignisse). PIN-Aktionen startet nur, wer sie ausdrücklich im Konnektor-Fenster anstößt; PIN und PUK werden **ausschließlich am Kartenterminal** eingegeben und die App sieht sie nie. Ein automatisches Auslesen der eGK-Versichertendaten (`ReadVSD`) findet nicht statt.
+Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf, Ereignisse). PIN-Aktionen sind standardmäßig ausgeschaltet (Einstellungen → „PIN-Verwaltung erlauben“) und starten auch dann nur, wenn man sie ausdrücklich im Konnektor-Fenster anstößt; PIN und PUK werden **ausschließlich am Kartenterminal** eingegeben und die App sieht sie nie. Ein automatisches Auslesen der eGK-Versichertendaten (`ReadVSD`) findet nicht statt.
 
 ### Was ausgelesen wird
 
@@ -160,7 +160,7 @@ Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf,
 - **Verständliche Fehlermeldungen:** gematik-Fehlercodes (GERROR) erscheinen mit Klartext nach gemSpec_Kon, z. B. `4004 – Ungültige Mandanten-ID` oder `4204 – Clientsystem aus dem Aufrufkontext konnte nicht authentifiziert werden`.
 - **Automatische Wiederverbindung** mit exponentiellem Backoff (15 s bis höchstens 5 min, mit Jitter). Nach einem Konnektor-Neustart werden `connector.sds` neu gelesen und die Ereignis-Abos neu angelegt.
 
-**Aktionen an SMC-B und HBA** (nur auf Knopfdruck): PIN verifizieren, PIN bzw. Transport-PIN ändern, mit PUK entsperren, Zertifikat online prüfen (OCSP). Enable/Disable der PIN nur, wenn der Konnektor CardService 8.2 oder höher anbietet. HBA-qSig und vergleichbare Vorläufer zeigen typischerweise nur PIN.QES.
+**Aktionen an SMC-B und HBA** (nur auf Knopfdruck und nur, wenn in den Einstellungen **„PIN-Verwaltung erlauben“** eingeschaltet ist – Standard: aus): PIN verifizieren, PIN bzw. Transport-PIN ändern, mit PUK entsperren, Zertifikat online prüfen (OCSP). Enable/Disable der PIN nur, wenn der Konnektor CardService 8.2 oder höher anbietet. HBA-qSig und vergleichbare Vorläufer zeigen typischerweise nur PIN.QES.
 
 <details>
 <summary><strong>Einrichtung Schritt für Schritt</strong></summary>

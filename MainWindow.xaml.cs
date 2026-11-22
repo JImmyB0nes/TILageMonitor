@@ -335,6 +335,8 @@ public partial class MainWindow : Window
             }
 
             _connectorWindow?.ApplyThemeRefresh();
+            // Chips der Konnektor-Karte werden per Code gebaut – nach dem Themenwechsel neu.
+            UpdateConnectorButton();
         }
         _settingsWindow?.SyncFrom(_settings);
     }

@@ -18,10 +18,13 @@ public sealed class ConnectorMonitor : IDisposable
     private readonly HashSet<string> _activeAlertKeys = new(StringComparer.Ordinal);
     private readonly ConnectorEventStream _events = new();
     private readonly SemaphoreSlim _pollGate = new(1, 1);
+    private readonly object _lifecycle = new();
+    private bool _disposed;
     private CancellationTokenSource? _cts;
     private Task? _loop;
     private int _consecutiveFailures;
     private bool _unreachableNotified;
+    private bool _configErrorNotified;
     private bool _subscribed;
     private bool _subscriptionAttempted;
 
@@ -32,6 +35,16 @@ public sealed class ConnectorMonitor : IDisposable
     /// </summary>
     private bool _subscriptionsAlive;
     private bool _eventHandlerRegistered;
+
+    /// <summary>
+    /// Abo-IDs, die diese App-Instanz selbst angelegt hat (ueber Restarts hinweg). Nur sie
+    /// verlaengert die App ohne GetSubscription, und nur sie raeumt sie nach einem Portwechsel
+    /// ab – fremde Abos (anderer Arbeitsplatz, andere Terminalserver-Sitzung) bleiben unberuehrt.
+    /// </summary>
+    private readonly HashSet<string> _ownSubscriptionIds = new(StringComparer.Ordinal);
+
+    /// <summary>Die Adresse, auf die die selbst angelegten Abos zeigen.</summary>
+    private string? _ownSubscriptionTarget;
     private DateTime _lastEventPoll = DateTime.MinValue;
 
     /// <summary>Beginn der laufenden Nichterreichbarkeit (null, solange alles laeuft).</summary>
@@ -70,6 +83,9 @@ public sealed class ConnectorMonitor : IDisposable
 
     /// <summary>gematik-Fehlercode des letzten Fehlschlags, falls der Konnektor einen geliefert hat.</summary>
     public string? LastErrorCode { get; private set; }
+
+    /// <summary>Der letzte Fehler war eine Ablehnung (Konfiguration), kein Ausfall.</summary>
+    public bool LastErrorIsConfiguration { get; private set; }
 
     /// <summary>Fehlschlaege in Folge – Grundlage fuer den Backoff.</summary>
     public int ConsecutiveFailures => _consecutiveFailures;
@@ -112,15 +128,36 @@ public sealed class ConnectorMonitor : IDisposable
 
     public ConnectorMonitor(Func<AppSettings> settingsProvider) => _settingsProvider = settingsProvider;
 
-    public void Restart()
+    /// <summary>Restart-Schluessel der laufenden Ueberwachung (null = keine).</summary>
+    private string? _runningKey;
+
+    /// <summary>
+    /// Startet die Ueberwachung neu – aber nur, wenn sich etwas Verbindungsrelevantes geaendert
+    /// hat (oder <paramref name="force"/>). Frueher loeste jedes Verlassen des Intervallfelds
+    /// einen Neustart aus: Abos wurden gekappt, und alle aktiven Warnungen kamen erneut als Toast.
+    /// </summary>
+    public void Restart(bool force = false)
     {
-        Stop();
+        if (_disposed)
+            return;
         var settings = _settingsProvider().Connector;
-        if (!settings.Enabled || !settings.MonitoringEnabled || !settings.IsConfigured)
+        var key = settings.RestartKey;
+        if (!force && _loop is not null && string.Equals(key, _runningKey, StringComparison.Ordinal))
         {
+            Updated?.Invoke();
+            return;
+        }
+
+        var active = settings.Enabled && settings.MonitoringEnabled && settings.IsConfigured;
+        // Bereits gemeldete Warnungen ueber den Neustart behalten – sie stehen ja noch an.
+        StopCore(keepAlertState: active);
+        if (!active)
+        {
+            _runningKey = null;
             LastSnapshot = null;
             LastAlerts = [];
             LastError = null;
+            LastErrorCode = null;
             // Ohne ueberwachung darf nichts nachstehen, was nach Abschaltung der Anbindung
             // noch auf "Karte rein" steht – dieselbe Begruendung, die fuer LastSnapshot gilt.
             LastPresence = null;
@@ -129,31 +166,42 @@ public sealed class ConnectorMonitor : IDisposable
             return;
         }
 
+        _runningKey = key;
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
         _loop = Task.Run(() => LoopAsync(token), token);
     }
 
-    public void Stop()
+    public void Stop() => StopCore(keepAlertState: false);
+
+    private void StopCore(bool keepAlertState)
     {
-        try { _cts?.Cancel(); } catch { /* ignore */ }
-        _cts?.Dispose();
-        _cts = null;
-        _loop = null;
-        lock (_activeAlertKeys)
-            _activeAlertKeys.Clear();
-        _consecutiveFailures = 0;
-        _outageSince = null;
-        _resubscribeAfterOutage = false;
-        _lastSubscribedAt = DateTime.MinValue;
-        NextAttemptAt = null;
-        _unreachableNotified = false;
-        _subscribed = false;
-        _subscriptionsAlive = false;
-        _subscriptionAttempted = false;
-        _events.EventReceived -= OnEvent;
-        _eventHandlerRegistered = false;
-        _events.Dispose();
+        lock (_lifecycle)
+        {
+            try { _cts?.Cancel(); } catch { /* ignore */ }
+            _cts?.Dispose();
+            _cts = null;
+            _loop = null;
+            _runningKey = null;
+            if (!keepAlertState)
+            {
+                lock (_activeAlertKeys)
+                    _activeAlertKeys.Clear();
+            }
+            _consecutiveFailures = 0;
+            _outageSince = null;
+            _resubscribeAfterOutage = false;
+            _lastSubscribedAt = DateTime.MinValue;
+            NextAttemptAt = null;
+            _unreachableNotified = false;
+            _configErrorNotified = false;
+            _subscribed = false;
+            _subscriptionsAlive = false;
+            _subscriptionAttempted = false;
+            _events.EventReceived -= OnEvent;
+            _eventHandlerRegistered = false;
+            _events.Dispose();
+        }
     }
 
     /// <summary>Übernimmt einen Datenstand aus dem Konnektor-Fenster, damit Anzeige und Tray konsistent sind.</summary>
@@ -171,7 +219,7 @@ public sealed class ConnectorMonitor : IDisposable
         RefreshPresence(snapshot);
         if (settings.HistoryEnabled)
             ConnectorHistoryStore.UpsertNow(snapshot, DateTime.Now);
-        if (settings.MonitoringEnabled)
+        if (settings.MonitoringEnabled && (settings.NotifyCertificateExpiry || settings.NotifyPinStatus))
             NotifyLedgerWarnings(settings, snapshot);
         Updated?.Invoke();
     }
@@ -230,6 +278,7 @@ public sealed class ConnectorMonitor : IDisposable
             LastSnapshot = snapshot;
             LastError = null;
             LastErrorCode = null;
+            LastErrorIsConfiguration = false;
             ClientCertificateSubject = client.ClientCertificate?.Subject;
             ClientCertificateNotAfter = client.ClientCertificate?.NotAfter;
 
@@ -248,6 +297,7 @@ public sealed class ConnectorMonitor : IDisposable
             _consecutiveFailures = 0;
             _outageSince = null;
             _unreachableNotified = false;
+            _configErrorNotified = false;
 
             var alerts = ConnectorHealth.Evaluate(snapshot, settings.CertificateWarningDays, DateTime.Now);
             LastAlerts = alerts;
@@ -269,7 +319,8 @@ public sealed class ConnectorMonitor : IDisposable
                     _activeAlertKeys.Add(alert.Key);
             }
 
-            NotifyLedgerWarnings(settings, snapshot);
+            if (settings.NotifyCertificateExpiry || settings.NotifyPinStatus)
+                NotifyLedgerWarnings(settings, snapshot);
 
             if (settings.EventSubscriptionsEnabled)
                 await EnsureSubscriptionsAsync(client, snapshot, ct);
@@ -281,16 +332,35 @@ public sealed class ConnectorMonitor : IDisposable
             // Bewusst auerhalb des Verlastkastens – der Vergleich braucht keine Ablage in der
             // Timeline, nur den letzten Stand. Wer den Verlauf abschaltet, dem faellt sonst
             // lautlos auch die Warnung vor still gerollter Firmware oder verlegten Terminals weg.
-            foreach (var change in ConnectorConfigurationDiff.CompareAndRemember(snapshot))
-                Notify(L("Konnektor-Konfiguration geaendert", "Connector configuration changed"), change, ToastUrgency.Warning, "konnektor-konfig");
+            // Alle Aenderungen eines Abrufs in einem Toast statt einer Toast-Flut.
+            var changes = ConnectorConfigurationDiff.CompareAndRemember(snapshot);
+            if (changes.Count > 0)
+                Notify(L("Konnektor-Konfiguration geändert", "Connector configuration changed"),
+                    string.Join("\n", changes.Take(5)) + (changes.Count > 5 ? L($"\n… und {changes.Count - 5} weitere", $"\n… and {changes.Count - 5} more") : ""),
+                    ToastUrgency.Warning, "konnektor-konfig");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             return;
         }
+        catch (Exception ex) when (ConnectorReconnect.IsConfigurationProblem(ex))
+        {
+            // Erreichbar, aber abgelehnt: kein Ausfall, kein Backoff, kein Verlaufseintrag.
+            LastError = ex.Message;
+            LastErrorIsConfiguration = true;
+            LastErrorCode = (ex as ConnectorFaultException)?.Code;
+            if (!_configErrorNotified)
+            {
+                _configErrorNotified = true;
+                Notify(L("Konnektor lehnt die Abfrage ab", "Connector rejects the request"),
+                    ex.Message + "\n" + L("Bitte die Konnektor-Einstellungen prüfen.", "Please check the connector settings."),
+                    ToastUrgency.Warning, "konnektor");
+            }
+        }
         catch (Exception ex)
         {
             LastError = ex.Message;
+            LastErrorIsConfiguration = false;
             LastErrorCode = (ex as ConnectorFaultException)?.Code;
             _consecutiveFailures++;
             _outageSince ??= DateTime.Now;
@@ -346,6 +416,12 @@ public sealed class ConnectorMonitor : IDisposable
         var action = !asked && _resubscribeAfterOutage
             ? ConnectorSubscriptionPolicy.Action.Subscribe
             : ConnectorSubscriptionPolicy.Decide(_subscriptionAttempted, _subscribed, asked, ours, DateTime.Now);
+        // Ohne GetSubscription nach Ablauf der Vorlaufzeit: die eigenen IDs verlaengern statt
+        // alle 12 Stunden einen weiteren Satz Abos anzulegen (die alten laufen sonst bis zu
+        // 25 Stunden parallel und verdoppeln jede Zustellung).
+        if (!asked && action == ConnectorSubscriptionPolicy.Action.Subscribe && _subscribed && !_resubscribeAfterOutage
+            && OwnSubscriptionIds.Count > 0 && string.Equals(_ownSubscriptionTarget, _events.EventTo, StringComparison.OrdinalIgnoreCase))
+            action = ConnectorSubscriptionPolicy.Action.Renew;
         _resubscribeAfterOutage = false;
         _subscriptionsAlive = ours.Any(s => s.Alive(DateTime.Now)) || (action == ConnectorSubscriptionPolicy.Action.None && _subscribed);
 
@@ -364,7 +440,10 @@ public sealed class ConnectorMonitor : IDisposable
 
         _subscriptionAttempted = true;
         var settings = _settingsProvider().Connector;
-        var useTls = settings.UseTls || snapshot.Directory?.TlsMandatory == true;
+        // TLS fuer CETP verlangt der Konnektor nur bei ANCL_TLS_MANDATORY (TIP1-A_4595). Ob eine
+        // Verbindung TLS spricht, erkennt die Senke am ersten Byte; das Zertifikat wird
+        // trotzdem geladen, falls vorhanden, damit beide Faelle funktionieren.
+        var tlsRequired = CetpTlsRequired(snapshot.Directory?.TlsMandatory, settings.UseTls);
         ConnectorClientCredentials? credentials = null;
         try
         {
@@ -374,14 +453,14 @@ public sealed class ConnectorMonitor : IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LastEventNote = ex.Message;
-            if (useTls)
+            if (tlsRequired)
                 return;
         }
 
         var options = new ConnectorEventSinkOptions
         {
             Host = settings.Host,
-            UseTls = useTls,
+            UseTls = tlsRequired,
             Credentials = credentials,
             PinnedFingerprint = settings.PinnedServerThumbprint
         };
@@ -396,6 +475,8 @@ public sealed class ConnectorMonitor : IDisposable
         if (action == ConnectorSubscriptionPolicy.Action.Renew)
         {
             var ids = ours.Where(s => !string.IsNullOrWhiteSpace(s.SubscriptionId)).Select(s => s.SubscriptionId).ToList();
+            if (ids.Count == 0 && !asked && string.Equals(_ownSubscriptionTarget, _events.EventTo, StringComparison.OrdinalIgnoreCase))
+                ids = OwnSubscriptionIds.ToList();
             try
             {
                 ct.ThrowIfCancellationRequested();
@@ -418,6 +499,10 @@ public sealed class ConnectorMonitor : IDisposable
             }
         }
 
+        // Eigene Abos, die auf eine fruehere Adresse zeigen (Portwechsel nach Neustart des
+        // Monitors), vorher abraeumen – sonst stapeln sich mit jedem Restart fuenf weitere.
+        await DropStaleOwnSubscriptionsAsync(client, ct);
+
         var succeeded = 0;
         foreach (var topic in ConnectorTopics.DefaultSubscriptions)
         {
@@ -426,7 +511,16 @@ public sealed class ConnectorMonitor : IDisposable
             {
                 var (id, _) = await client.SubscribeAsync(_events.EventTo ?? "", topic, ct);
                 if (!string.IsNullOrWhiteSpace(id))
+                {
                     succeeded++;
+                    lock (_ownSubscriptionIds)
+                    {
+                        if (!string.Equals(_ownSubscriptionTarget, _events.EventTo, StringComparison.OrdinalIgnoreCase))
+                            _ownSubscriptionIds.Clear();
+                        _ownSubscriptionTarget = _events.EventTo;
+                        _ownSubscriptionIds.Add(id);
+                    }
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -518,10 +612,51 @@ public sealed class ConnectorMonitor : IDisposable
         // Der Hafen ist der wechselnde Teil, die Maschine ist es nicht. Dieselbe App, die
         // nach einem besetzten Port auf den naechsten ausweicht, haelt ihr Abo andernfalls
         // fuer verschwunden, obwohl es auf dem alten Hafen weiter laeuft.
-        var host = ConnectorSubscription.HostOf(_events.EventTo);
-        if (host is null)
+        var target = _events.EventTo;
+        if (string.IsNullOrWhiteSpace(target))
             return [];
-        return snapshot.Subscriptions.Where(s => s.FromHost(host)).ToList();
+        return snapshot.Subscriptions.Where(s => s.TargetsExactly(target)).ToList();
+    }
+
+    /// <summary>IDs der Abos, die diese App-Instanz selbst angelegt hat.</summary>
+    public IReadOnlyCollection<string> OwnSubscriptionIds
+    {
+        get { lock (_ownSubscriptionIds) return _ownSubscriptionIds.ToList(); }
+    }
+
+    /// <summary>Gehoert das Abo dieser App? Exakt die eigene Adresse oder eine selbst angelegte ID.</summary>
+    public bool IsOwnSubscription(ConnectorSubscription sub)
+    {
+        if (sub is null)
+            return false;
+        if (!string.IsNullOrWhiteSpace(sub.SubscriptionId))
+            lock (_ownSubscriptionIds)
+                if (_ownSubscriptionIds.Contains(sub.SubscriptionId.Trim()))
+                    return true;
+        return sub.TargetsExactly(_events.EventTo);
+    }
+
+    /// <summary>Entscheidet, ob die CETP-Senke TLS verlangen muss (TIP1-A_4595).</summary>
+    internal static bool CetpTlsRequired(bool? tlsMandatoryFromDirectory, bool settingsUseTls) =>
+        tlsMandatoryFromDirectory ?? settingsUseTls;
+
+    private async Task DropStaleOwnSubscriptionsAsync(ConnectorClient client, CancellationToken ct)
+    {
+        List<string> stale;
+        lock (_ownSubscriptionIds)
+        {
+            if (_ownSubscriptionIds.Count == 0 || string.Equals(_ownSubscriptionTarget, _events.EventTo, StringComparison.OrdinalIgnoreCase))
+                return;
+            stale = _ownSubscriptionIds.ToList();
+            _ownSubscriptionIds.Clear();
+            _ownSubscriptionTarget = null;
+        }
+        foreach (var id in stale)
+        {
+            ct.ThrowIfCancellationRequested();
+            try { await client.UnsubscribeAsync(id, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { /* laeuft nach 25 h ab */ }
+        }
     }
 
     /// <summary>
@@ -533,6 +668,11 @@ public sealed class ConnectorMonitor : IDisposable
     /// </summary>
     public void ForgetSubscriptions()
     {
+        lock (_ownSubscriptionIds)
+        {
+            _ownSubscriptionIds.Clear();
+            _ownSubscriptionTarget = null;
+        }
         _subscribed = false;
         _subscriptionsAlive = false;
         _subscriptionAttempted = true;
@@ -647,7 +787,7 @@ public sealed class ConnectorMonitor : IDisposable
             var settings = _settingsProvider().Connector;
             if (!settings.MonitoringEnabled)
                 return;
-            var id = evt.Param("ICCSN") ?? evt.Param("CardHandle") ?? evt.Param("CtID") ?? evt.Param("CtId") ?? "";
+            var id = evt.Param("ICCSN") ?? evt.Param("CardHandle") ?? evt.Param("CtID") ?? "";
             if (!_eventDedup.TryAccept($"{evt.Topic?.Trim()}|{id}", DateTime.Now))
                 return;
             if (ConnectorEventNotifications.Decide(evt, ConnectorEventToastFilter.From(settings)) is not { } toast)
@@ -671,22 +811,35 @@ public sealed class ConnectorMonitor : IDisposable
     /// </summary>
     private void NotifyLedgerWarnings(ConnectorSettings settings, ConnectorSnapshot snapshot)
     {
-        if (!settings.NotifyCertificateExpiry && !settings.NotifyPinStatus)
-            return;
-        var now = DateTime.Now;
-        var subject = ClientCertificateSubject;
-        var notAfter = ClientCertificateNotAfter;
         var due = ConnectorWarningStore.Update(ledger =>
-        {
-            var list = new List<ConnectorAlert>();
-            if (settings.NotifyCertificateExpiry)
-                list.AddRange(ConnectorCertificateExpiry.Evaluate(ConnectorCertificateExpiry.Collect(snapshot, subject, notAfter), ledger, now));
-            if (settings.NotifyPinStatus)
-                list.AddRange(ConnectorPinWatch.Evaluate(snapshot, ledger));
-            return list;
-        });
+            EvaluateLedger(settings, ToastService.AreNotificationsEnabled, snapshot, ClientCertificateSubject, ClientCertificateNotAfter, ledger, DateTime.Now));
         foreach (var alert in due)
             Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
+    }
+
+    /// <summary>
+    /// Bewertet Ablauf- und PIN-Warnungen gegen den Ledger. Sind Benachrichtigungen aus
+    /// (global oder fuer den Konnektor), bleibt der Ledger unberuehrt: sonst gilt eine
+    /// Ablaufstufe als "gemeldet", obwohl nie ein Toast erschien – und nach dem Wiedereinschalten
+    /// kaeme die 7-Tage-Warnung nie.
+    /// </summary>
+    internal static IReadOnlyList<ConnectorAlert> EvaluateLedger(
+        ConnectorSettings settings,
+        bool notificationsEnabled,
+        ConnectorSnapshot snapshot,
+        string? clientSubject,
+        DateTime? clientNotAfter,
+        ConnectorWarningLedger ledger,
+        DateTime now)
+    {
+        if (!notificationsEnabled || !settings.MonitoringEnabled)
+            return [];
+        var list = new List<ConnectorAlert>();
+        if (settings.NotifyCertificateExpiry)
+            list.AddRange(ConnectorCertificateExpiry.Evaluate(ConnectorCertificateExpiry.Collect(snapshot, clientSubject, clientNotAfter), ledger, now));
+        if (settings.NotifyPinStatus)
+            list.AddRange(ConnectorPinWatch.Evaluate(snapshot, ledger));
+        return list;
     }
 
     /// <summary>Kurzbeschreibung der Wiederverbindung fuer Anzeige und Bericht, null wenn alles laeuft.</summary>
@@ -712,7 +865,14 @@ public sealed class ConnectorMonitor : IDisposable
 
     public void Dispose()
     {
+        lock (_lifecycle)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+        }
         Stop();
-        _pollGate.Dispose();
+        // Den Gate nicht entsorgen: ein laufender Abruf gibt ihn im finally noch frei und
+        // wuerde sonst mit ObjectDisposedException als unbeobachtete Task-Ausnahme enden.
     }
 }

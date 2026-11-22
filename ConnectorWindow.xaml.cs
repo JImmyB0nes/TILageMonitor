@@ -226,8 +226,12 @@ public partial class ConnectorWindow : Window
 
         if (CertPasswordBox.Password.Length > 0)
             current.ClientCertificatePasswordProtected = SecretProtector.Protect(CertPasswordBox.Password);
+        else if (ClearCertPasswordToggle.IsChecked == true)
+            current.ClientCertificatePasswordProtected = null;
         if (BasicPasswordBox.Password.Length > 0)
             current.BasicAuthPasswordProtected = SecretProtector.Protect(BasicPasswordBox.Password);
+        else if (ClearBasicPasswordToggle.IsChecked == true)
+            current.BasicAuthPasswordProtected = null;
 
         // Neue Adresse => anderes Gerät => alten Pin verwerfen.
         var previous = _ownerMain.GetSettingsSnapshot().Connector;
@@ -270,6 +274,8 @@ public partial class ConnectorWindow : Window
         _ownerMain.ApplyConnectorSettings();
         CertPasswordBox.Clear();
         BasicPasswordBox.Clear();
+        ClearCertPasswordToggle.IsChecked = false;
+        ClearBasicPasswordToggle.IsChecked = false;
         CertPasswordHint.Text = string.IsNullOrEmpty(connector.ClientCertificatePasswordProtected) ? "" : L("gespeichert", "saved");
         UpdatePinnedText(connector.PinnedServerThumbprint);
     }
@@ -326,6 +332,18 @@ public partial class ConnectorWindow : Window
             Log(L("Hinweis zu den Kontext-IDs (nicht blockierend): ", "Note on context IDs (not blocking): ") + warn);
     }
 
+    /// <summary>Basic-Auth ueber reines HTTP schickt Benutzer und Passwort im Klartext durchs LAN.</summary>
+    private bool ConfirmCleartextBasicAuth(ConnectorSettings s)
+    {
+        if (!s.SendsBasicAuthInClear)
+            return true;
+        return System.Windows.MessageBox.Show(this,
+            L("Basic-Auth ist ohne TLS eingestellt: Benutzername und Passwort gehen im Klartext durchs Netz.\n\nTrotzdem fortfahren?",
+              "Basic auth is configured without TLS: user name and password travel the network in clear text.\n\nContinue anyway?"),
+            L("Unverschlüsselte Anmeldung", "Unencrypted authentication"),
+            MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
     private async void SaveConnect_Click(object sender, RoutedEventArgs e)
     {
         var s = ReadForm();
@@ -335,6 +353,8 @@ public partial class ConnectorWindow : Window
             ShowWarning(error);
             return;
         }
+        if (!ConfirmCleartextBasicAuth(s))
+            return;
         NoteContextWarnings(s);
         Persist(s);
         UpdateClientCertInfo(s);
@@ -356,6 +376,8 @@ public partial class ConnectorWindow : Window
             ShowWarning(error);
             return;
         }
+        if (!ConfirmCleartextBasicAuth(s))
+            return;
         NoteContextWarnings(s);
         UpdateClientCertInfo(s);
         await LoadSnapshotAsync(s, interactive: true, persistTrustOnly: true);
@@ -628,8 +650,12 @@ public partial class ConnectorWindow : Window
             FooterText.Text += "  ·  " + reconnect;
     }
 
+    /// <summary>Letzte Statusanzeige – fuer den Neuaufbau nach einem Themenwechsel ohne Datenstand.</summary>
+    private (string Title, string Detail, string Key, string Glyph)? _lastStatus;
+
     private void ShowStatus(string title, string detail, string statusKey, string glyph = "\u2022")
     {
+        _lastStatus = (title, detail, statusKey, glyph);
         StatusTitle.Text = title;
         StatusDetail.Text = detail;
         StatusGlyph.Text = glyph;
@@ -868,11 +894,12 @@ public partial class ConnectorWindow : Window
 
     /// <summary>Rechneranteil der eigenen Adresse, Hafen abgeschnitten. Null, wenn kein
     /// Lauscher steht – damit nicht mit einer leeren Zeichenkette jede Adresse getroffen wird.</summary>
-    private string? OwnTarget() => ConnectorSubscription.HostOf(_ownerMain.ConnectorMonitor.EventTarget);
+    private string? OwnTarget() => _ownerMain.ConnectorMonitor.EventTarget;
 
     /// <summary>Dieselbe Ordnung wie im Hintergrundpoller, damit die Anzeige und die
     /// Erneuerung nicht an einem Eintrag auseinandergeraten.</summary>
-    private static bool IsOurs(ConnectorSubscription sub, string? host) => sub.FromHost(host);
+    private bool IsOurs(ConnectorSubscription sub, string? target) =>
+        _ownerMain.ConnectorMonitor.IsOwnSubscription(sub) || sub.TargetsExactly(target);
 
     /// <summary>
     /// Kuendigt alle Abos, die auf diesem Rechner zeigen. Ein Laeufer, der nach
@@ -1521,6 +1548,24 @@ public partial class ConnectorWindow : Window
         // Im Objekth initializer faellt der Name rechts auf die Instanz-Eigenschaft zurueck – mit
         // Typnamen qualifizieren, sonst greift CS0176.
         var buttons = new WrapPanel { HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
+        // PIN-Verwaltung veraendert die Karte – nur, wenn sie in den Einstellungen ausdruecklich
+        // erlaubt ist (Standard: aus). Sonst ein kurzer Hinweis statt der Knoepfe.
+        if (!_ownerMain.GetSettingsSnapshot().Connector.AllowPinManagement)
+        {
+            buttons.Children.Add(new TextBlock
+            {
+                Text = L("PIN-Verwaltung in den Einstellungen deaktiviert", "PIN management disabled in settings"),
+                FontSize = 11,
+                Foreground = Brush("TextMuted"),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                ToolTip = L("Einstellungen → Konnektor → „PIN-Verwaltung erlauben“. Der TI-Lage Monitor liest sonst nur.",
+                            "Settings → Connector → “Allow PIN management”. Otherwise TI-Lage Monitor only reads.")
+            });
+            Grid.SetColumn(buttons, 3);
+            row.Children.Add(buttons);
+            return row;
+        }
         if (!blocked && !transport && state?.IsVerified != true)
             buttons.Children.Add(ActionButton(L("PIN verifizieren", "Verify PIN"), async () => await PinActionAsync(card, pinType, "VerifyPin")));
         if (!blocked)
@@ -1869,6 +1914,12 @@ public partial class ConnectorWindow : Window
         var where = terminal is null || string.IsNullOrWhiteSpace(terminal.Name) ? card.CtId : terminal.Name;
         bool? setNewPin = null;
 
+        if (!_ownerMain.GetSettingsSnapshot().Connector.AllowPinManagement)
+        {
+            ShowWarning(L("PIN-Verwaltung ist in den Einstellungen deaktiviert.", "PIN management is disabled in settings."));
+            return;
+        }
+
         if ((operation is "EnablePin" or "DisablePin") && _snapshot?.Directory?.SupportsEnableDisablePin != true)
         {
             ShowWarning(L("Aktivieren und Deaktivieren der PIN unterstützt dieser Konnektor nicht (CardService unter 8.2).",
@@ -2138,7 +2189,11 @@ public partial class ConnectorWindow : Window
         sb.AppendLine("Karten:");
         foreach (var c in s.Cards)
         {
-            sb.Append($"  {c.CardType} {c.CardHolderName} ICCSN {c.Iccsn} @ {c.CtId}/{c.SlotId}");
+            // Versichertendaten (eGK/KVK) gehoeren nicht in einen Bericht, der per Mail an den
+            // Support geht: Name weg, ICCSN gekuerzt.
+            sb.Append(c.IsEgk || c.CardType.Equals("KVK", StringComparison.OrdinalIgnoreCase)
+                ? $"  {c.CardType} [Versicherte/r] ICCSN {ConnectorPrivacy.MaskIccsn(c.Iccsn)} @ {c.CtId}/{c.SlotId}"
+                : $"  {c.CardType} {c.CardHolderName} ICCSN {c.Iccsn} @ {c.CtId}/{c.SlotId}");
             if (c.Certificates.Count > 0)
                 sb.Append(" [").Append(string.Join(", ", c.Certificates.Select(c => $"{c.CertRef} bis {c.NotAfter:dd.MM.yyyy}"))).Append(']');
             if ((c.AuthCertificate?.NotAfter ?? c.CertificateExpirationDate) is { } exp)
@@ -2154,7 +2209,7 @@ public partial class ConnectorWindow : Window
             sb.AppendLine("Teilfehler:");
             foreach (var w in s.Warnings)
                 sb.AppendLine("  " + w);
-            if (s.Warnings.Any(w => w.Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase)))
+            if (s.Warnings.Any(w => w.Contains("Syntaxfehler", StringComparison.OrdinalIgnoreCase) || w.Contains("Syntax error", StringComparison.OrdinalIgnoreCase) || w.Contains("4000", StringComparison.Ordinal)))
                 sb.AppendLine("  Hinweis: 4000 heisst nur, dass der Konnektor die Nachricht ablehnt – nicht womit. " +
                               "Der Aufrufkontext ist bei allen Diensten gleich: antworten EventService oder " +
                               "CertificateService mit denselben IDs, ist der Kontext als Ursache ausgeschlossen. " +
@@ -2169,14 +2224,13 @@ public partial class ConnectorWindow : Window
             // Erklaerung, die am haeufigsten in die Irre fuehrt. Der Lauscher ist hier
             // moeglicherwaise nicht dabei – ohne ihn faellt die Ordnung auf die reine
             // Aufzuehlung zurueck, statt sie zu raten.
-            var target = ConnectorSubscription.HostOf(monitor?.EventTarget);
             if (monitor is not null)
-                sb.AppendLine($"Ereignis-Abos: {s.Subscriptions.Count} eingetragen, {s.Subscriptions.Count(sub => IsOurs(sub, target))} von dieser App"
+                sb.AppendLine($"Ereignis-Abos: {s.Subscriptions.Count} eingetragen, {s.Subscriptions.Count(sub => monitor.IsOwnSubscription(sub))} von dieser App"
                               + (monitor.SubscriptionsAlive ? ", stehen noch" : ", laut Konnektor nicht mehr aktiv") + ".");
             else
                 sb.AppendLine($"Ereignis-Abos: {s.Subscriptions.Count} eingetragen – wem sie hoeren, steht nicht dabei, der Bericht lief ohne Lauscher.");
             foreach (var sub in s.Subscriptions)
-                sb.AppendLine($"  {(IsOurs(sub, target) ? "*" : " ")} {sub.SubscriptionId}  {sub.Topic}  ->  {sub.EventTo}"
+                sb.AppendLine($"  {(monitor?.IsOwnSubscription(sub) == true ? "*" : " ")} {sub.SubscriptionId}  {sub.Topic}  ->  {sub.EventTo}"
                               + (sub.TerminationTime is { } until ? $"  bis {until:dd.MM.yyyy HH:mm}" + (sub.Alive(DateTime.Now) ? "" : " (abgelaufen)") : ""));
         }
         else
@@ -2309,7 +2363,16 @@ public partial class ConnectorWindow : Window
         }
         _themeRefreshQueued = false;
         if (_snapshot is not null)
+        {
             Render(_snapshot);
+            return;
+        }
+        // Ohne Datenstand (z. B. Fehlermeldung) die per Code gesetzten Pinsel trotzdem
+        // nachziehen – sonst bleibt der Banner in den Farben des alten Themas stehen.
+        if (_lastStatus is { } st)
+            ShowStatus(st.Title, st.Detail, st.Key, st.Glyph);
+        RenderPresence();
+        RenderHistory();
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

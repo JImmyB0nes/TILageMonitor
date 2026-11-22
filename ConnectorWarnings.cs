@@ -368,7 +368,7 @@ public static class ConnectorToastOwnership
 {
     private static readonly string[] LedgerOwnedPrefixes =
     [
-        "cert-expiring-", "cert-expired-", "pin-blocked-", "pin-lasttry-", "smcb-unverified-"
+        "cert-expiring-", "cert-expired-", "qes-expired-", "pin-blocked-", "pin-lasttry-", "smcb-unverified-"
     ];
 
     public static bool IsOwnedByLedger(string alertKey) =>
