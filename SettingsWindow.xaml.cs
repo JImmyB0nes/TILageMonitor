@@ -38,6 +38,7 @@ public partial class SettingsWindow : Window
         SetLanguageSelection(_settings.Language);
         BuildNotifyCheckboxes();
         ApplyNotifyChipsEnabledState();
+        LoadConnectorToggles();
         _initializing = false;
     }
 
@@ -53,6 +54,7 @@ public partial class SettingsWindow : Window
         SetLanguageSelection(settings.Language);
         BuildNotifyCheckboxes();
         ApplyNotifyChipsEnabledState();
+        LoadConnectorToggles();
         _initializing = false;
     }
 
@@ -242,4 +244,45 @@ public partial class SettingsWindow : Window
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void LoadConnectorToggles()
+    {
+        var c = _settings.Connector;
+        ConnectorEnabledToggle.IsChecked = c.Enabled;
+        ConnectorMonitoringToggle.IsChecked = c.MonitoringEnabled;
+        ConnectorEventsToggle.IsChecked = c.EventSubscriptionsEnabled;
+        ConnectorHistoryToggle.IsChecked = c.HistoryEnabled;
+        ConnectorPollBox.Text = c.PollMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ConnectorWarnBox.Text = c.CertificateWarningDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private void ConnectorSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        _settings.Connector.Enabled = ConnectorEnabledToggle.IsChecked == true;
+        _settings.Connector.MonitoringEnabled = ConnectorMonitoringToggle.IsChecked == true;
+        _settings.Connector.EventSubscriptionsEnabled = ConnectorEventsToggle.IsChecked == true;
+        _settings.Connector.HistoryEnabled = ConnectorHistoryToggle.IsChecked == true;
+        SettingsStore.Save(_settings);
+        _ownerMain.ApplySettings(_settings);
+        _ownerMain.ApplyConnectorSettings();
+    }
+
+    private void ConnectorPoll_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_initializing)
+            return;
+        if (int.TryParse(ConnectorPollBox.Text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var poll))
+            _settings.Connector.PollMinutes = Math.Clamp(poll, 1, 120);
+        if (int.TryParse(ConnectorWarnBox.Text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var days))
+            _settings.Connector.CertificateWarningDays = Math.Clamp(days, 1, 365);
+        ConnectorPollBox.Text = _settings.Connector.PollMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ConnectorWarnBox.Text = _settings.Connector.CertificateWarningDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        SettingsStore.Save(_settings);
+        _ownerMain.ApplySettings(_settings);
+        _ownerMain.ApplyConnectorSettings();
+    }
+
+    private void OpenConnector_Click(object sender, RoutedEventArgs e) => _ownerMain.OpenConnectorWindow();
 }

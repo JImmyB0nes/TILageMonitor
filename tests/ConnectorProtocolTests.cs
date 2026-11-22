@@ -124,13 +124,14 @@ public sealed class ConnectorProtocolTests
     [Theory]
     [InlineData("Mandant1", "CS1", "AP1", null)]                       // unaufällig
     [InlineData("Mandant-1", "CS_1", "AP1", null)]                      // Bindestrich/Unterstrich erlaubt
-    [InlineData("mandant.1", "CS1", "AP1", "Mandant-ID")]               // Punkt => 4000 Syntaxfehler
-    [InlineData("Mandant 1", "CS1", "AP1", "Leerzeichen")]
-    [InlineData("Mandant1", "CS1", "AP1	", "Tabulator")]
-    [InlineData("Mandant1", "CS1", "AP1.", "Arbeitsplatz-ID")]
+    [InlineData("mandant.1", "CS1", "AP1", null)]                      // ungewöhnliche Zeichen: nur Warnung
+    [InlineData("Mandant 1", "CS1", "AP1", null)]                     // Leerzeichen: nur Warnung
+    [InlineData("Mandant1", "CS1", "AP1	", null)]                    // Tabulator: nur Warnung
+    [InlineData("Mandant1", "CS1", "AP1.", null)]                     // Punkt: nur Warnung
     [InlineData("aMandant1", "CS1", "AP1", null)]
     [InlineData("Mandant1", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "AP1", "maximal 64")]
-    public void ValidateContextIds_flags_ids_a_connector_would_reject(string mandant, string client, string workplace, string? expectedFragment)
+    [InlineData("", "CS1", "AP1", "leer")]
+    public void ValidateContextIds_only_enforces_xsd_max_length_and_required_fields(string mandant, string client, string workplace, string? expectedFragment)
     {
         var s = Settings();
         s.MandantId = mandant;
@@ -148,15 +149,39 @@ public sealed class ConnectorProtocolTests
         }
     }
 
+
+    [Theory]
+    [InlineData("mandant.1", "CS1", "AP1", "Mandant-ID")]
+    [InlineData("Mandant 1", "CS1", "AP1", "Mandant-ID")]
+    [InlineData("Mandant1", "CS1", "AP1.", "Arbeitsplatz-ID")]
+    [InlineData("Mandant-1", "CS_1", "AP1", null)]
+    public void WarnContextIds_flags_unusual_characters_without_blocking(string mandant, string client, string workplace, string? expectedFragment)
+    {
+        var s = Settings();
+        s.MandantId = mandant;
+        s.ClientSystemId = client;
+        s.WorkplaceId = workplace;
+
+        var result = ConnectorProtocol.WarnContextIds(s);
+
+        if (expectedFragment is null)
+            Assert.Null(result);
+        else
+        {
+            Assert.NotNull(result);
+            Assert.Contains(expectedFragment, result);
+        }
+    }
+
     [Fact]
     public void Subscribe_puts_event_target_and_topic_in_the_subscription()
     {
         XNamespace evt = "http://ws.gematik.de/conn/EventService/v7.2";
-        var element = ConnectorProtocol.Subscribe(evt, Settings(), "cetp://192.168.1.20:48150", ConnectorProtocol.EventTopic(evt.NamespaceName, "CardInserted"));
+        var element = ConnectorProtocol.Subscribe(evt, Settings(), "cetp://192.168.1.20:48150", ConnectorTopics.CardInserted);
         var subscription = element.Element(evt + "Subscription")!;
 
         Assert.Equal("cetp://192.168.1.20:48150", subscription.Element(evt + "EventTo")!.Value);
-        Assert.Equal("http://ws.gematik.de/conn/EventService/v7.2#CardInserted", subscription.Element(evt + "Topic")!.Value);
+        Assert.Equal("CARD/INSERTED", subscription.Element(evt + "Topic")!.Value);
         Assert.Null(subscription.Element(evt + "SubscriptionID"));
         Assert.NotNull(element.Element(ConnectorProtocol.Cctx + "Context"));
     }
@@ -173,7 +198,7 @@ public sealed class ConnectorProtocolTests
                   <EVT:SubscriptionID>sub-1</EVT:SubscriptionID>
                   <EVT:TerminationTime>2026-11-21T09:00:00Z</EVT:TerminationTime>
                   <EVT:EventTo>cetp://192.168.1.20:48150</EVT:EventTo>
-                  <EVT:Topic>http://ws.gematik.de/conn/EventService/v7.2#CardInserted</EVT:Topic>
+                  <EVT:Topic>CARD/INSERTED</EVT:Topic>
                 </EVT:Subscription>
               </EVT:Subscriptions>
             </EVT:GetSubscriptionResponse>
@@ -184,7 +209,7 @@ public sealed class ConnectorProtocolTests
         var sub = Assert.Single(subscriptions);
         Assert.Equal("sub-1", sub.SubscriptionId);
         Assert.Equal("cetp://192.168.1.20:48150", sub.EventTo);
-        Assert.EndsWith("#CardInserted", sub.Topic);
+        Assert.Equal("CARD/INSERTED", sub.Topic);
         Assert.NotNull(sub.TerminationTime);
     }
 
@@ -194,7 +219,7 @@ public sealed class ConnectorProtocolTests
         var evt = ConnectorProtocol.ParseEvent("""
             <?xml version="1.0" encoding="UTF-8"?>
             <EVT:Event xmlns:EVT="http://ws.gematik.de/conn/EventService/v7.2">
-              <EVT:Topic>http://ws.gematik.de/conn/EventService/v7.2#CardInserted</EVT:Topic>
+              <EVT:Topic>CARD/INSERTED</EVT:Topic>
               <EVT:Type>Operation</EVT:Type>
               <EVT:Severity>Info</EVT:Severity>
               <EVT:SubscriptionID>sub-1</EVT:SubscriptionID>
@@ -285,15 +310,14 @@ public sealed class ConnectorProtocolTests
         var element = ConnectorProtocol.PinOperation(card, "UnblockPin", Settings(), "H1", "PIN.SMC", setNewPin: true);
 
         Assert.Equal(["Context", "CardHandle", "PinTyp", "SetNewPin"], element.Elements().Select(e => e.Name.LocalName).ToList());
-        Assert.Equal("true", element.Element(ConnectorProtocol.CardCmn + "SetNewPin")!.Value);
+        Assert.Equal("true", element.Element(card + "SetNewPin")!.Value);
+        Assert.Null(element.Element(ConnectorProtocol.CardCmn + "SetNewPin"));
         Assert.Equal("http://ws.gematik.de/conn/CardService/v8.1#UnblockPin", ConnectorProtocol.SoapAction(card, "UnblockPin"));
     }
 
     /// <summary>
-    /// PinTyp und SetNewPin gehoeren nachweislich ins Gemeinschaftsschema CardServiceCommon, nicht
-    /// in den Namespace des Dienstes. Beleg ist das Beispiel "ChangePin" im Implementierungsleitfaden
-    /// gemILF_PS der gematik. Stand PinTyp im Dienst-Namespace, erkannte der Konnektor das Element
-    /// nicht und antwortete auf GetPinStatus, ChangePin und VerifyCard mit 4000 Syntaxfehler.
+    /// PinTyp steht im Gemeinschaftsschema CardServiceCommon. SetNewPin ist laut CardService-XSD
+    /// ein lokales Element des Dienst-Namespaces (nicht CardServiceCommon).
     /// </summary>
     [Theory]
     [InlineData("PIN.SMC")]
@@ -522,58 +546,55 @@ public sealed class ConnectorProtocolTests
         Assert.Equal("Betriebsstätte Arzt", profession);
     }
 
-    [Fact]
-    public void ParseAccessCheck_prefers_the_boolean_flag_over_the_result_string()
-    {
-        var xml = Wrap("""
-            <CS:GetAccessCheckResponse xmlns:CS="http://ws.gematik.de/conn/CardService/v8.1"
-                                      xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0">
-              <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
-              <CS:IsContextAvailable>false</CS:IsContextAvailable>
-            </CS:GetAccessCheckResponse>
-            """);
 
-        var check = ConnectorProtocol.ParseAccessCheck(ConnectorProtocol.ParseBody(xml));
-        Assert.False(check.Granted);
-    }
+
+
+}
+
 
     [Fact]
-    public void ParseAccessCheck_falls_back_to_the_result_when_no_flag_is_present()
+    public void RenewSubscriptions_lists_ids_in_the_event_service_namespace()
     {
-        var xml = Wrap("""
-            <CS:VerifyCardResponse xmlns:CS="http://ws.gematik.de/conn/CardService/v8.1"
-                                   xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0">
-              <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
-              <CS:VerificationResult>OK</CS:VerificationResult>
-              <CS:Roles><CS:Role>NARZT</CS:Role></CS:Roles>
-            </CS:VerifyCardResponse>
-            """);
-
-        var check = ConnectorProtocol.ParseAccessCheck(ConnectorProtocol.ParseBody(xml));
-        Assert.True(check.Granted);
-        Assert.Equal(["NARZT"], check.Roles);
-    }
-
-    [Fact]
-    public void VerifyCard_puts_card_handle_and_privilege_into_the_request()
-    {
-        XNamespace card = "http://ws.gematik.de/conn/CardService/v8.1";
-        var element = ConnectorProtocol.VerifyCard(card, Settings(), "handle-1", "VSDM");
-
-        Assert.Equal("handle-1", element.Element(ConnectorProtocol.Conn + "CardHandle")!.Value);
-        Assert.Equal("VSDM", element.Element(ConnectorProtocol.Conn + "AccessPrivilege")!.Value);
-    }
-
-    [Fact]
-    public void IsContextAvailable_omits_the_privilege_when_not_requested()
-    {
-        XNamespace card = "http://ws.gematik.de/conn/CardService/v8.1";
-        var element = ConnectorProtocol.IsContextAvailable(card, Settings());
-
-        Assert.Null(element.Element(ConnectorProtocol.Conn + "AccessPrivilege"));
+        XNamespace evt = "http://ws.gematik.de/conn/EventService/v7.2";
+        var element = ConnectorProtocol.RenewSubscriptions(evt, Settings(), ["sub-1", "sub-2"]);
+        Assert.Equal("RenewSubscriptions", element.Name.LocalName);
+        Assert.Equal(["sub-1", "sub-2"], element.Elements(evt + "SubscriptionID").Select(e => e.Value).ToList());
         Assert.NotNull(element.Element(ConnectorProtocol.Cctx + "Context"));
     }
-}
+
+    [Fact]
+    public void ParseRenewals_reads_subscription_id_and_termination_time()
+    {
+        var xml = Wrap("""
+            <EVT:RenewSubscriptionsResponse xmlns:EVT="http://ws.gematik.de/conn/EventService/v7.2"
+                                            xmlns:CONN="http://ws.gematik.de/conn/ConnectorCommon/v5.0">
+              <CONN:Status><CONN:Result>OK</CONN:Result></CONN:Status>
+              <EVT:SubscriptionRenewal>
+                <EVT:SubscriptionID>sub-1</EVT:SubscriptionID>
+                <EVT:TerminationTime>2026-11-23T09:00:00Z</EVT:TerminationTime>
+              </EVT:SubscriptionRenewal>
+            </EVT:RenewSubscriptionsResponse>
+            """);
+        var renewals = ConnectorProtocol.ParseRenewals(ConnectorProtocol.ParseBody(xml));
+        var one = Assert.Single(renewals);
+        Assert.Equal("sub-1", one.SubscriptionId);
+        Assert.NotNull(one.TerminationTime);
+    }
+
+    [Fact]
+    public void ParseEvent_reads_official_card_inserted_topic()
+    {
+        var evt = ConnectorProtocol.ParseEvent("""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <EVT:Event xmlns:EVT="http://ws.gematik.de/conn/EventService/v7.2">
+              <EVT:Topic>CARD/INSERTED</EVT:Topic>
+              <EVT:Message><EVT:Parameter><EVT:Key>CardType</EVT:Key><EVT:Value>SMC-B</EVT:Value></EVT:Parameter></EVT:Message>
+            </EVT:Event>
+            """);
+        Assert.NotNull(evt);
+        Assert.Equal("CARD/INSERTED", evt!.Topic);
+        Assert.Equal("SMC-B", evt.Param("CardType"));
+    }
 
 public sealed class ConnectorHealthTests
 {

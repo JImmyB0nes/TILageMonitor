@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Authentication;
@@ -24,9 +25,8 @@ public sealed class ConnectorClient : IDisposable
     public static readonly TimeSpan PinOperationTimeout = TimeSpan.FromMinutes(5);
 
     private readonly ConnectorSettings _settings;
-    private readonly HttpClient _http;
-    private readonly X509Certificate2? _clientCertificate;
-    private readonly X509Certificate2Collection? _clientCertificateBag;
+    private readonly IConnectorHttpTransport _transport;
+    private readonly ConnectorClientCredentials? _credentials;
     private readonly Uri _baseUri;
     private readonly Action<string>? _log;
     private ConnectorServiceDirectory? _directory;
@@ -41,144 +41,153 @@ public sealed class ConnectorClient : IDisposable
     public string? LastServerThumbprint { get; private set; }
     public string? LastServerSubject { get; private set; }
     public DateTime? LastServerNotAfter { get; private set; }
-    private bool _lastServerRejected;
 
     /// <summary>Zuletzt gesendeter XML-Rumpf – nur für Diagnoseberichte und Log interessant.</summary>
     public string LastRequestXml { get; private set; } = "";
     public string LastResponseXml { get; private set; } = "";
 
-    public ConnectorClient(ConnectorSettings settings, Action<string>? log = null)
+    public ConnectorClient(ConnectorSettings settings, Action<string>? log = null, IConnectorHttpTransport? transport = null)
     {
         _settings = settings.Clone();
         _log = log;
         _baseUri = ConnectorProtocol.BuildBaseUri(_settings.Host, _settings.UseTls);
 
+        if (ConnectorCapabilities.GetOmitUserId(_settings.Host) == true)
+            _settings.UserId = "";
+
         if (!string.IsNullOrWhiteSpace(_settings.ClientCertificatePath))
         {
-            (_clientCertificate, _clientCertificateBag) = LoadClientCertificate(
+            _credentials = LoadClientCertificate(
                 _settings.ClientCertificatePath,
                 SecretProtector.Unprotect(_settings.ClientCertificatePasswordProtected));
         }
 
-        var handler = new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            ConnectTimeout = TimeSpan.FromSeconds(10),
-            UseProxy = false, // Konnektor ist immer im lokalen Netz
-            SslOptions = new SslClientAuthenticationOptions
-            {
-                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                RemoteCertificateValidationCallback = ValidateServerCertificate,
-                // Zertifikat immer anbieten – Windows würde es sonst ggf. wegfiltern, wenn die
-                // CA-Liste des Konnektors nicht zum Aussteller des Client-Zertifikats passt.
-                LocalCertificateSelectionCallback = (_, _, _, _, _) => _clientCertificate!
-            }
-        };
-        if (_clientCertificate is not null)
-            handler.SslOptions.ClientCertificates = new X509CertificateCollection { _clientCertificate };
-        else
-            handler.SslOptions.LocalCertificateSelectionCallback = null;
-
-        _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-
-        var basicPassword = SecretProtector.Unprotect(_settings.BasicAuthPasswordProtected);
-        if (!string.IsNullOrWhiteSpace(_settings.BasicAuthUser))
-        {
-            var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_settings.BasicAuthUser}:{basicPassword}"));
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", token);
-        }
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd($"TILageMonitor/{UpdateService.CurrentVersion}");
+        _transport = transport ?? new ConnectorHttpTransport(
+            () => _settings.PinnedServerThumbprint,
+            _credentials,
+            allowTls13: true,
+            userAgent: $"TILageMonitor/{UpdateService.CurrentVersion}");
     }
 
-    public X509Certificate2? ClientCertificate => _clientCertificate;
+    public ConnectorClientCredentials? ClientCertificate => _credentials;
 
-    public static (X509Certificate2 Certificate, X509Certificate2Collection Bag) LoadClientCertificate(string path, string? password)
+    public static ConnectorClientCredentials LoadClientCertificate(string path, string? password)
     {
         if (!File.Exists(path))
             throw new FileNotFoundException($"Zertifikatsdatei nicht gefunden: {path}");
 
-        X509Certificate2Collection bag;
         try
         {
-            // UserKeySet: Schannel benötigt einen (temporär) persistierten Schlüssel; EphemeralKeySet
-            // funktioniert unter Windows nicht für TLS-Client-Authentifizierung.
-            bag = X509CertificateLoader.LoadPkcs12CollectionFromFile(
-                path,
-                string.IsNullOrEmpty(password) ? null : password,
-                X509KeyStorageFlags.UserKeySet);
+            return ConnectorClientCredentials.Load(File.ReadAllBytes(path), password ?? "");
         }
-        catch (CryptographicException ex)
+        catch (ConnectorCredentialException)
         {
-            throw new InvalidOperationException(
-                $"Das Client-Zertifikat konnte nicht geöffnet werden (Passwort falsch oder Datei beschädigt): {ex.Message}", ex);
+            throw;
         }
-
-        var withKey = bag.FirstOrDefault(c => c.HasPrivateKey)
-                      ?? throw new InvalidOperationException("Die .p12-Datei enthält kein Zertifikat mit privatem Schlüssel.");
-        return (withKey, bag);
+        catch (Exception ex)
+        {
+            throw new ConnectorCredentialException(
+                LocalizationService.Pick(
+                    $"Das Client-Zertifikat konnte nicht geöffnet werden: {ex.Message}",
+                    $"The client certificate could not be opened: {ex.Message}"), ex);
+        }
     }
 
-    private bool ValidateServerCertificate(object sender, X509Certificate? certificate, X509Chain? chain, SslPolicyErrors errors)
-    {
-        if (certificate is null)
-            return false;
+    public bool SupportsEnableDisablePin => _directory?.SupportsEnableDisablePin == true;
 
-        using var cert = new X509Certificate2(certificate);
-        var thumbprint = Convert.ToHexString(SHA256.HashData(cert.RawData));
-        LastServerThumbprint = thumbprint;
-        LastServerSubject = cert.Subject;
-        LastServerNotAfter = cert.NotAfter;
-
-        var pinned = _settings.PinnedServerThumbprint;
-        var accepted = !string.IsNullOrWhiteSpace(pinned)
-            ? string.Equals(pinned, thumbprint, StringComparison.OrdinalIgnoreCase)
-            : errors == SslPolicyErrors.None;
-        _lastServerRejected = !accepted;
-        return accepted;
-    }
-
-    // ------------------------------------------------------------------
+        // ------------------------------------------------------------------
     // Transport
     // ------------------------------------------------------------------
 
-    private async Task<string> SendAsync(HttpRequestMessage request, TimeSpan timeout, CancellationToken ct)
+    private async Task<string> SendAsync(Uri uri, string method, byte[]? body, string? contentType, IReadOnlyDictionary<string, string>? extraHeaders, TimeSpan timeout, CancellationToken ct)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(timeout);
-        var sw = Stopwatch.StartNew();
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (extraHeaders is not null)
+        {
+            foreach (var kv in extraHeaders)
+                headers[kv.Key] = kv.Value;
+        }
+
+        var basicPassword = "";
         try
         {
-            _lastServerRejected = false;
-            using var response = await _http.SendAsync(request, cts.Token);
-            var body = await response.Content.ReadAsStringAsync(cts.Token);
-            _log?.Invoke($"{request.Method} {request.RequestUri?.AbsolutePath} → {(int)response.StatusCode} ({sw.ElapsedMilliseconds} ms)");
+            basicPassword = SecretProtector.Unprotect(_settings.BasicAuthPasswordProtected);
+        }
+        catch (SecretProtectorException)
+        {
+            if (!string.IsNullOrWhiteSpace(_settings.BasicAuthUser))
+                throw;
+        }
+        if (!string.IsNullOrWhiteSpace(_settings.BasicAuthUser))
+        {
+            var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_settings.BasicAuthUser}:{basicPassword}"));
+            headers["Authorization"] = "Basic " + token;
+        }
+
+        try
+        {
+            var response = await _transport.SendAsync(
+                new ConnectorHttpRequest(method, uri, headers, body, contentType), timeout, ct);
+            RememberServerCertificate();
+            var text = response.BodyText;
+            LastResponseXml = text;
 
             // SOAP-Faults kommen mit HTTP 500 – Body trotzdem auswerten.
-            if (!response.IsSuccessStatusCode && !body.Contains("Envelope", StringComparison.Ordinal))
+            if (response.StatusCode is < 200 or >= 300 && !text.Contains("Envelope", StringComparison.Ordinal))
             {
-                var hint = (int)response.StatusCode switch
+                var hint = response.StatusCode switch
                 {
                     401 => " – Authentifizierung abgelehnt (Client-Zertifikat bzw. Benutzer/Passwort prüfen).",
                     403 => " – Zugriff verweigert (Clientsystem im Konnektor freigeschaltet?).",
                     404 => " – Endpunkt nicht gefunden.",
                     _ => ""
                 };
-                throw new HttpRequestException($"HTTP {(int)response.StatusCode} {response.ReasonPhrase}{hint}");
+                throw new HttpRequestException($"HTTP {response.StatusCode} {response.Reason}{hint}");
             }
-            return body;
+            return text;
         }
-        catch (HttpRequestException) when (_lastServerRejected && LastServerThumbprint is not null)
+        catch (ConnectorTlsException ex) when (ex.PinFailure && _transport.LastServerCertificate is { } cert)
         {
-            throw new ConnectorUntrustedServerException(LastServerThumbprint, LastServerSubject ?? "", LastServerNotAfter ?? DateTime.MinValue);
+            RememberServerCertificate();
+            throw new ConnectorUntrustedServerException(cert.Sha256Fingerprint, cert.Subject, cert.NotAfter);
+        }
+        catch (Exception ex) when (ex is IOException or SocketException or TimeoutException or ConnectorTlsException)
+        {
+            // gemILF_PS TIP1-A_4967: bei Verbindungsproblemen SDS-Cache erneuern.
+            _directory = null;
+            throw;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            _log?.Invoke($"{request.RequestUri?.AbsolutePath} → Zeitüberschreitung nach {timeout.TotalSeconds:0} s");
+            _log?.Invoke($"{uri.AbsolutePath} → Zeitüberschreitung nach {timeout.TotalSeconds:0} s");
+            _directory = null;
             throw new TimeoutException($"Zeitüberschreitung: Der Konnektor hat nicht innerhalb von {timeout.TotalSeconds:0} Sekunden geantwortet.");
         }
     }
 
-    private async Task<XElement> CallAsync(string serviceName, string defaultNs, Func<XNamespace, XElement> build, string operation, TimeSpan? timeout, CancellationToken ct)
+    private void RememberServerCertificate()
+    {
+        if (_transport.LastServerCertificate is not { } cert)
+            return;
+        LastServerThumbprint = cert.Sha256Fingerprint;
+        LastServerSubject = cert.Subject;
+        LastServerNotAfter = cert.NotAfter;
+    }
+
+    private async Task<XElement> PostAsync(string serviceName, string operation, XNamespace serviceNs, Uri endpoint, string envelope, TimeSpan? timeout, CancellationToken ct)
+    {
+        var bytes = Encoding.UTF8.GetBytes(envelope);
+        var headers = new Dictionary<string, string>
+        {
+            ["SOAPAction"] = $"\"{ConnectorProtocol.SoapAction(serviceNs, operation)}\""
+        };
+        _log?.Invoke($"{serviceName}.{operation}");
+        var body = await SendAsync(endpoint, "POST", bytes, "text/xml; charset=utf-8", headers, timeout ?? DefaultTimeout, ct);
+        LastResponseXml = body;
+        return ConnectorProtocol.ParseBody(body);
+    }
+
+        private async Task<XElement> CallAsync(string serviceName, string defaultNs, Func<XNamespace, XElement> build, string operation, TimeSpan? timeout, CancellationToken ct)
     {
         var directory = await GetServiceDirectoryAsync(ct);
         var service = directory.Find(serviceName)
@@ -230,7 +239,8 @@ public sealed class ConnectorClient : IDisposable
                 var answer = await PostAsync(serviceName, operation, candidates[0], endpoint,
                     ConnectorProtocol.Envelope(build(candidates[0])), timeout, ct);
                 _log?.Invoke($"  Gelungen ohne Benutzer-ID \u201E{saved}\u201C – die akzeptiert dieser Konnektor nicht");
-                _settings.UserId = saved;
+                ConnectorCapabilities.SetOmitUserId(_settings.Host, true);
+                _settings.UserId = "";
                 _okByService[serviceName] = _okByService.TryGetValue(serviceName, out var done) ? done + 1 : 1;
                 return answer;
             }
@@ -317,19 +327,6 @@ public sealed class ConnectorClient : IDisposable
     private static string ShortenXml(string xml) =>
         xml.Length <= 900 ? xml : xml[..900] + " …";
 
-    private async Task<XElement> PostAsync(string serviceName, string operation, XNamespace serviceNs, Uri endpoint, string envelope, TimeSpan? timeout, CancellationToken ct)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = new StringContent(envelope, Encoding.UTF8, "text/xml")
-        };
-        request.Headers.TryAddWithoutValidation("SOAPAction", $"\"{ConnectorProtocol.SoapAction(serviceNs, operation)}\"");
-        _log?.Invoke($"{serviceName}.{operation}");
-        var body = await SendAsync(request, timeout ?? DefaultTimeout, ct);
-        LastResponseXml = body;
-        return ConnectorProtocol.ParseBody(body);
-    }
-
     // ------------------------------------------------------------------
     // Operationen
     // ------------------------------------------------------------------
@@ -339,8 +336,7 @@ public sealed class ConnectorClient : IDisposable
         if (_directory is not null)
             return _directory;
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_baseUri, "connector.sds"));
-        var xml = await SendAsync(request, DefaultTimeout, ct);
+        var xml = await SendAsync(new Uri(_baseUri, "connector.sds"), "GET", null, null, null, DefaultTimeout, ct);
         try
         {
             _directory = ConnectorProtocol.ParseServiceDirectory(xml);
@@ -440,6 +436,10 @@ public sealed class ConnectorClient : IDisposable
         await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
             ns => ConnectorProtocol.Unsubscribe(ns, _settings, subscriptionId), "Unsubscribe", null, ct);
 
+    public async Task<List<(string SubscriptionId, DateTime? TerminationTime)>> RenewSubscriptionsAsync(IEnumerable<string> subscriptionIds, CancellationToken ct) =>
+        ConnectorProtocol.ParseRenewals(await CallAsync("EventService", ConnectorProtocol.DefaultEventServiceNs,
+            ns => ConnectorProtocol.RenewSubscriptions(ns, _settings, subscriptionIds), "RenewSubscriptions", null, ct));
+
     /// <summary>
     /// Liest alle vier nach CertRefEnum moeglichen Zertifikate einer Karte. Fehlende Refs
     /// sind normal (SMC-B fuehrt kein C.QES) und werden als leer, nicht als Fehler behandelt.
@@ -493,36 +493,6 @@ public sealed class ConnectorClient : IDisposable
         var first = ConnectorProtocol.ParseCardCertificates(response).FirstOrDefault();
         return first.Base64 is null ? null : ConnectorProtocol.DescribeCertificate(string.IsNullOrEmpty(first.CertRef) ? certRef : first.CertRef, first.Base64);
     }
-
-    /// <summary>
-    /// Laedt die im Konnektor hinterlegten Berechtigungen fuer den aktuellen Aufrufkontext
-    /// ein. Reine Leseabfrage – fuehrt zu keiner PIN-Abfrage am Terminal.
-    /// </summary>
-    public async Task<ConnectorAccessCheck> IsContextAvailableAsync(string? accessPrivilege, CancellationToken ct)
-    {
-        // CardService liefert IsContextAvailable, nicht EventService – Namespace aus dem SDS.
-        var service = (await GetServiceDirectoryAsync(ct)).Find("CardService") is { } found ? found : null;
-        XNamespace ns = service?.TargetNamespace is { Length: > 0 } target
-            ? ConnectorProtocol.NormalizeMessageNamespace(target)
-            : ConnectorProtocol.DefaultCardServiceNs;
-        var endpoint = service is null
-            ? _baseUri
-            : ConnectorProtocol.ResolveEndpoint(service.Endpoint, _baseUri, _settings.RewriteEndpointHost);
-
-        var body = await SendAsync(new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = new StringContent(ConnectorProtocol.Envelope(ConnectorProtocol.IsContextAvailable(ns, _settings, accessPrivilege)), Encoding.UTF8, "text/xml")
-        }, DefaultTimeout, ct);
-        return ConnectorProtocol.ParseAccessCheck(ConnectorProtocol.ParseBody(body));
-    }
-
-    /// <summary>
-    /// Echte Pruefung einer Karte gegen eine Berechtigung. Kann je nach Firmware eine
-    /// PIN-Verifizierung am Terminal ausloesen – nur auf Knopfdruck verwenden, nicht im Polling.
-    /// </summary>
-    public async Task<ConnectorAccessCheck> VerifyCardAsync(string cardHandle, string? accessPrivilege, CancellationToken ct) =>
-        ConnectorProtocol.ParseAccessCheck(await CallAsync("CardService", ConnectorProtocol.DefaultCardServiceNs,
-            ns => ConnectorProtocol.VerifyCard(ns, _settings, cardHandle, accessPrivilege), "VerifyCard", TimeSpan.FromSeconds(60), ct));
 
     public async Task<ConnectorVerificationResult> VerifyCertificateAsync(string base64Certificate, CancellationToken ct) =>
         ConnectorProtocol.ParseVerification(await CallAsync("CertificateService", ConnectorProtocol.DefaultCertificateServiceNs,
@@ -591,11 +561,7 @@ public sealed class ConnectorClient : IDisposable
 
     public void Dispose()
     {
-        _http.Dispose();
-        if (_clientCertificateBag is not null)
-        {
-            foreach (var cert in _clientCertificateBag)
-                cert.Dispose();
-        }
+        // Transport hält keine gepoolten Verbindungen über die Lebensdauer hinaus (Connection: close).
+        // Der P12-Schlüssel bleibt nur im Arbeitsspeicher dieses Clients.
     }
 }

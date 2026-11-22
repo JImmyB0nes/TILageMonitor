@@ -24,7 +24,7 @@ public sealed class ConnectorPresenceTests
     public void CardInserted_event_reads_type_and_terminal()
     {
         var presence = ConnectorPresence.FromEvent(Event(
-            "http://ws.gematik.de/conn/EventService/v7.2#CardInserted",
+            ConnectorTopics.CardInserted,
             ("CardType", "SMC-B"), ("CtId", "CT1")));
 
         Assert.NotNull(presence);
@@ -37,7 +37,7 @@ public sealed class ConnectorPresenceTests
     public void CardRemoved_event_is_read_as_out()
     {
         var presence = ConnectorPresence.FromEvent(Event(
-            "http://ws.gematik.de/conn/EventService/v7.2#CardRemoved"));
+            ConnectorTopics.CardRemoved));
 
         Assert.NotNull(presence);
         Assert.False(presence!.Inserted);
@@ -48,7 +48,18 @@ public sealed class ConnectorPresenceTests
     {
         // StatusChanged oder ein Firmware-Thema darf nicht als Kartensignal gedeutet werden.
         Assert.Null(ConnectorPresence.FromEvent(Event("http://ws.gematik.de/conn/EventService/v7.2#StatusChanged")));
+        Assert.Null(ConnectorPresence.FromEvent(Event(ConnectorTopics.TerminalConnected)));
+        Assert.Null(ConnectorPresence.FromEvent(Event(ConnectorTopics.CertCardStatus)));
         Assert.Null(ConnectorPresence.FromEvent(null));
+    }
+
+    [Fact]
+    public void Official_and_legacy_card_topics_are_recognized()
+    {
+        Assert.True(ConnectorPresence.FromEvent(Event("CARD/INSERTED"))!.Inserted);
+        Assert.False(ConnectorPresence.FromEvent(Event("CARD/REMOVED"))!.Inserted);
+        Assert.True(ConnectorPresence.FromEvent(Event("http://ws.gematik.de/conn/EventService/v7.2#CardInserted"))!.Inserted);
+        Assert.False(ConnectorPresence.FromEvent(Event("#CardRemoved"))!.Inserted);
     }
 
     [Fact]
@@ -164,7 +175,7 @@ public sealed class ConnectorPresenceTests
                   <EVT:SubscriptionID>sub-1</EVT:SubscriptionID>
                   <EVT:TerminationTime>2026-11-21T09:00:00Z</EVT:TerminationTime>
                   <EVT:EventTo>cetp://192.168.1.20:48150</EVT:EventTo>
-                  <EVT:Topic>http://ws.gematik.de/conn/EventService/v7.2#CardInserted</EVT:Topic>
+                  <EVT:Topic>CARD/INSERTED</EVT:Topic>
                 </EVT:Subscription>
                 <EVT:Subscription>
                   <EVT:SubscriptionID>sub-2</EVT:SubscriptionID>

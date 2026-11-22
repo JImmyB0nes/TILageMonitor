@@ -1,24 +1,25 @@
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
+using Org.BouncyCastle.Tls;
 
 namespace TILageMonitor;
 
+/// <summary>Parameter für die CETP-Ereignissenke (gemSpec_Kon TIP1-A_4594/4595/4596).</summary>
+public sealed class ConnectorEventSinkOptions
+{
+    public required string Host { get; init; }
+    public required bool UseTls { get; init; }
+    public ConnectorClientCredentials? Credentials { get; init; }
+    public string? PinnedFingerprint { get; init; }
+}
+
 /// <summary>
-/// Haelt den TCP-Listener fuer Konnektor-Ereignisse ("cetp://"). Der Konnektor baut die
-/// Verbindung aktiv zum Client auf, deshalb hoert die App auf einem lokalen Port und meldet
-/// diese Adresse beim Abo als EventTo.
-///
-/// Warum ueberhaupt: ohne Abo erkennt die App eine gesteckte oder gezogene Karte erst beim
-/// naechsten Poll (Standard 5 Minuten). Mit Abo kommt die Meldung sofort.
-///
-/// Robust ausgelegt: schlaegt das Abo fehl (Topic unbekannt, Firmware ohne EventSupport),
-/// faellt die App kommentarlos auf reines Pollen zurueck. Der Listener bleibt trotzdem
-/// aktiv, damit man manuell eingetragene Abos des Konnektors nicht ueberrascht verliert.
+/// Hält den TCP- (CETP2) bzw. TLS-Listener (CETP1) für Konnektor-Ereignisse.
+/// EventTo-Syntax: cetp://host:port bzw. cetp://[ipv6]:port. Nachrichten folgen dem CETP-Rahmen.
 /// </summary>
 public sealed class ConnectorEventStream : IDisposable
 {
-    /// <summary>Portbereich, damit mehrere Instanzen und andere Apps nicht kollidieren.</summary>
     private const int BasePort = 48150;
     private const int MaxPortAttempts = 12;
 
@@ -26,46 +27,65 @@ public sealed class ConnectorEventStream : IDisposable
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private int _port;
+    private ConnectorEventSinkOptions? _options;
+    private IPAddress[] _allowedPeers = [];
 
-    /// <summary>Lokale Adresse, die gegenueber dem Konnektor als EventTo genannt wird.</summary>
     public string? EventTo { get; private set; }
 
     public bool IsListening
     {
-        get
-        {
-            lock (_gate)
-                return _listener is not null;
-        }
+        get { lock (_gate) return _listener is not null; }
     }
 
-    /// <summary>Wird fuer jedes empfangene Ereignis ausgelöst (Thread-Pool).</summary>
     public event Action<ConnectorEvent>? EventReceived;
 
-    /// <summary>
-    /// Startet den Listener, falls noch nicht geschehen. Bei Erfolg wird die EventTo-Adresse
-    /// gesetzt; der Aufrufer entscheidet, ob er damit ein Abo anlegt.
-    /// </summary>
-    public bool EnsureListening(Action<string>? log = null)
+    public bool EnsureListening(ConnectorEventSinkOptions options, Action<string>? log = null)
     {
+        ArgumentNullException.ThrowIfNull(options);
         lock (_gate)
         {
-            if (_listener is not null)
+            if (_listener is not null && SameOptions(_options, options))
                 return true;
+            StopLocked();
+
+            if (options.UseTls && options.Credentials is null)
+            {
+                log?.Invoke(LocalizationService.Pick(
+                    "CETP über TLS braucht das Clientzertifikat (P12) als Serverzertifikat der Ereignissenke.",
+                    "CETP over TLS needs the client certificate (P12) as the event sink's server certificate."));
+                return false;
+            }
+
+            var allowed = ConnectorEventTo.ResolveHost(options.Host).ToArray();
+            if (allowed.Length == 0)
+            {
+                log?.Invoke(LocalizationService.Pick(
+                    "Die Konnektor-Adresse für die Ereignissenke konnte nicht aufgelöst werden.",
+                    "The connector address for the event sink could not be resolved."));
+                return false;
+            }
+
+            var local = ConnectorEventTo.LocalAddressToward(allowed[0])
+                        ?? (allowed[0].AddressFamily == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Loopback : IPAddress.Loopback);
 
             for (var attempt = 0; attempt < MaxPortAttempts; attempt++)
             {
                 var candidate = BasePort + attempt;
                 try
                 {
-                    var listener = new TcpListener(IPAddress.Any, candidate);
+                    var listener = new TcpListener(local, candidate);
                     listener.Start();
                     _listener = listener;
                     _port = candidate;
                     _cts = new CancellationTokenSource();
-                    EventTo = $"cetp://{LocalAddressFor(listener)}:{candidate}";
-                    _ = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));
-                    log?.Invoke($"Ereignis-Listener auf Port {candidate} ({EventTo})");
+                    _options = options;
+                    _allowedPeers = allowed;
+                    EventTo = ConnectorEventTo.Format(local, candidate);
+                    var token = _cts.Token;
+                    _ = Task.Run(() => AcceptLoopAsync(listener, token), token);
+                    log?.Invoke(LocalizationService.Pick(
+                        $"Ereignis-Listener auf Port {candidate} ({EventTo}){(options.UseTls ? ", TLS" : "")}",
+                        $"Event listener on port {candidate} ({EventTo}){(options.UseTls ? ", TLS" : "")}"));
                     return true;
                 }
                 catch (SocketException)
@@ -74,34 +94,21 @@ public sealed class ConnectorEventStream : IDisposable
                 }
             }
 
-            log?.Invoke("Ereignis-Listener konnte keinen freien Port besetzen – reine Pollabfrage");
+            log?.Invoke(LocalizationService.Pick(
+                "Ereignis-Listener konnte keinen freien Port besetzen – reine Pollabfrage",
+                "Event listener could not bind a free port – polling only"));
             return false;
         }
     }
 
-    /// <summary>
-    /// Ermittelt die IP, die der Konnektor erreichen kann. Ein einzelnes Socket zu seiner
-    /// Basis-URL liefert die richtige Quelle, auch bei mehreren Netzwerkkarten.
-    /// </summary>
-    private static string LocalAddressFor(TcpListener listener)
+    private static bool SameOptions(ConnectorEventSinkOptions? a, ConnectorEventSinkOptions b)
     {
-        if (listener.LocalEndpoint is not IPEndPoint endpoint)
-            return "127.0.0.1";
-        if (!IPAddress.Any.Equals(endpoint.Address))
-            return endpoint.Address.ToString();
-
-        try
-        {
-            using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            probe.Connect("10.255.255.255", 65530); // route only, no traffic sent
-            if (probe.LocalEndPoint is IPEndPoint local)
-                return local.Address.ToString();
-        }
-        catch
-        {
-            // Kein Standardweg – besser zuhoeren als 0.0.0.0 zu nennen.
-        }
-        return "127.0.0.1";
+        if (a is null)
+            return false;
+        return string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase)
+               && a.UseTls == b.UseTls
+               && string.Equals(a.PinnedFingerprint, b.PinnedFingerprint, StringComparison.OrdinalIgnoreCase)
+               && ReferenceEquals(a.Credentials, b.Credentials);
     }
 
     private async Task AcceptLoopAsync(TcpListener listener, CancellationToken ct)
@@ -119,7 +126,13 @@ public sealed class ConnectorEventStream : IDisposable
             }
             catch (SocketException)
             {
-                return; // Listener wurde verworfen
+                return;
+            }
+
+            if (client.Client.RemoteEndPoint is not IPEndPoint remote || !ConnectorEventTo.IsAllowedPeer(remote, _allowedPeers))
+            {
+                try { client.Dispose(); } catch { /* ignore */ }
+                continue;
             }
 
             _ = Task.Run(() => ReadLoopAsync(client, ct), ct);
@@ -130,23 +143,40 @@ public sealed class ConnectorEventStream : IDisposable
     {
         using (client)
         {
-            var buffer = new byte[8192];
-            var pending = new StringBuilder();
             try
             {
-                using var stream = client.GetStream();
-                while (!ct.IsCancellationRequested)
+                Stream stream = client.GetStream();
+                TlsServerProtocol? tls = null;
+                try
                 {
-                    var read = await stream.ReadAsync(buffer, ct);
-                    if (read <= 0)
-                        return;
+                    var options = _options;
+                    if (options?.UseTls == true && options.Credentials is not null)
+                    {
+                        tls = new TlsServerProtocol(stream);
+                        var server = new ConnectorTlsServer(options.Credentials, options.PinnedFingerprint, requireClientCertificate: false);
+                        await Task.Run(() => tls.Accept(server), ct);
+                        stream = tls.Stream;
+                    }
 
-                    pending.Append(Encoding.UTF8.GetString(buffer, 0, read));
+                    var buffer = new byte[8192];
+                    var reader = new ConnectorCetp.Reader();
+                    while (!ct.IsCancellationRequested)
+                    {
+                        var read = await stream.ReadAsync(buffer, ct);
+                        if (read <= 0)
+                            return;
 
-                    // Der Konnektor schickt mehrere XML-Nachrichten hintinander. Alles, was
-                    // bereits ein schliessendes Envelope-Ende enthaelt, sofort verarbeiten.
-                    while (TakeMessage(ref pending, out var message))
-                        Dispatch(message);
+                        reader.Add(buffer.AsSpan(0, read));
+                        if (reader.Closed)
+                            return;
+
+                        while (reader.TryDequeueXml(out var xml))
+                            Dispatch(xml);
+                    }
+                }
+                finally
+                {
+                    try { tls?.Close(); } catch { /* ignore */ }
                 }
             }
             catch (OperationCanceledException)
@@ -155,122 +185,9 @@ public sealed class ConnectorEventStream : IDisposable
             }
             catch (Exception)
             {
-                // Verbindung zerschossen – naechster Versuch kommt vom Konnektor.
+                // Verbindung zerschossen – nächster Versuch kommt vom Konnektor.
             }
         }
-    }
-
-    /// <summary>
-    /// Holt die naechstfertige XML-Nachricht aus dem Puffer.
-    /// </summary>
-    /// <remarks>
-    /// Der Konnektor liefert eine SOAP-Huelle, und die kommt ueblicherweise in mehreren
-    /// TCP-Stuecken an. Ein Schnitt auf das INHERE </Event> – also die fruehere Fassung –
-    /// warf bei einer verteilten Nachricht ein halbes Dokument weg: XDocument.Parse
-    /// scheiterte, ParseEvent lieferte null, das Ereignis war lautlos weg. Geschnitten wird
-    /// deshalb erst am aeussersten Schluss-Tag, und nur wenn mit Sicherheit feststeht, dass
-    /// die Nachricht vollstaendig ist. Ein laufender envelope-Anfang haelt die Innen-Tag
-    /// bis zum naechsten Lesedurchgang zurueck.
-    /// </summary>
-    internal static bool TakeMessage(ref StringBuilder pending, out string message)
-    {
-        message = "";
-        var text = pending.ToString();
-
-        var envelopeEnd = IndexOfClosingTag(text, "Envelope");
-        if (envelopeEnd >= 0)
-        {
-            Cut(ref pending, text, envelopeEnd, out message);
-            return true;
-        }
-
-        // Ohne Huelle ist das Ereignis selbst die ganze Nachricht – aber nur, solange nicht
-        // gerade eine Huelle laeuft, deren Ende noch fehlt. Der Oeffnungsanker ist mit
-        // Vorsicht zu sehen: ueblich steht ein Namespace-Praefix dazwischen (<soap:Envelope>),
-        // ein blosses Suchen auf "<Envelope" haette die Huelle uebersehen und zu frueh
-        // geschnitten – derselbe Fehler, den die fruehere Fassung am Innen-Tag beging.
-        if (!HasOpeningEnvelope(text))
-        {
-            var eventEnd = IndexOfClosingTag(text, "Event");
-            if (eventEnd < 0)
-            {
-                Guard(ref pending, text);
-                return false;
-            }
-
-            Cut(ref pending, text, eventEnd, out message);
-            return true;
-        }
-
-        Guard(ref pending, text);
-        return false;
-    }
-
-    /// <summary>
-    /// Sucht das schliessende Tag eines Elements, gleichgueltig mit welchem Namespace-Praefix.
-    /// </summary>
-    /// <remarks>
-    /// Ein starres Suchen auf "</Envelope>" ueberschlaegt "</soap:Envelope>", weil nach dem
-    /// schraegen Strich der Praefix kommt, nicht der Name. In der frueheren Fassung fiel das
-    /// am Innen-Tag auf, seit der Umstellung auf das aeussere Ende fehlt der Schluss-Treffer
-    /// bei praefixierter Huelle ganz: TakeMessage sieht nie ein Ende, der Puffer laeuft bis zur
-    /// Schutzkante und wird verworfen – Ereignisse verschwanden wieder lautlos, diesmal
-    /// dauerhaft. Gelesen wird deshalb der eigentliche Elementname, Praefix abgetrennt.
-    /// </remarks>
-    private static int IndexOfClosingTag(string text, string localName)
-    {
-        for (var at = text.IndexOf("</", StringComparison.Ordinal); at >= 0; at = text.IndexOf("</", at + 2, StringComparison.Ordinal))
-        {
-            var close = text.IndexOf('>', at);
-            if (close < 0)
-                return -1; // noch unvollstaendig – naechsten Lesedurchgang abwarten
-
-            var name = text[(at + 2)..close].Trim();
-            var colon = name.LastIndexOf(':');
-            if (colon >= 0)
-                name = name[(colon + 1)..];
-
-            if (name.Equals(localName, StringComparison.OrdinalIgnoreCase))
-                return close + 1;
-
-            // Ein anderes Element, zum Beispiel </CardEvent>, zaehlt nicht – sonst wurde das
-            // Innen-Tag erneut zum aeussersten Ende erklaert.
-        }
-
-        return -1;
-    }
-
-    /// <summary>
-    /// Steht irgendwo ein oeffnendes Envelope-Element? Es kann ein Praefix voranstehen
-    /// (<soap:Envelope>, <ns1:Envelope>), deshalb wird beides geprueft.
-    /// </summary>
-    internal static bool HasOpeningEnvelope(string text)
-    {
-        var at = text.IndexOf("Envelope", StringComparison.OrdinalIgnoreCase);
-        while (at > 0)
-        {
-            var before = text[at - 1];
-            if (before is '<' or ':')
-                return true;
-            at = text.IndexOf("Envelope", at + 1, StringComparison.OrdinalIgnoreCase);
-        }
-        return false;
-    }
-
-    /// <summary>Schneidet die Nachricht bis <paramref name="end"/> ab und stellt den Rest zurueck.</summary>
-    private static void Cut(ref StringBuilder pending, string text, int end, out string message)
-    {
-        message = text[..end];
-        pending.Clear();
-        if (end < text.Length)
-            pending.Append(text[end..]);
-    }
-
-    /// <summary>Ein beschaedigter Stream darf den Puffer nicht endlos anwachsen lassen.</summary>
-    private static void Guard(ref StringBuilder pending, string text)
-    {
-        if (text.Length > 2_000_000)
-            pending.Clear();
     }
 
     private void Dispatch(string xml)
@@ -292,12 +209,19 @@ public sealed class ConnectorEventStream : IDisposable
     {
         lock (_gate)
         {
-            try { _cts?.Cancel(); } catch { /* ignore */ }
-            _cts?.Dispose();
-            _cts = null;
-            try { _listener?.Stop(); } catch { /* ignore */ }
-            _listener = null;
-            EventTo = null;
+            StopLocked();
         }
+    }
+
+    private void StopLocked()
+    {
+        try { _cts?.Cancel(); } catch { /* ignore */ }
+        _cts?.Dispose();
+        _cts = null;
+        try { _listener?.Stop(); } catch { /* ignore */ }
+        _listener = null;
+        EventTo = null;
+        _options = null;
+        _allowedPeers = [];
     }
 }

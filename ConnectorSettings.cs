@@ -112,9 +112,19 @@ public static class SecretProtector
             var data = ProtectedData.Unprotect(Convert.FromBase64String(protectedValue), Entropy, DataProtectionScope.CurrentUser);
             return Encoding.UTF8.GetString(data);
         }
-        catch
+        catch (Exception ex)
         {
-            return "";
+            throw new SecretProtectorException(
+                LocalizationService.Pick(
+                    "Das gespeicherte Passwort konnte nicht entschlüsselt werden (beschädigt oder von einem anderen Windows-Konto geschützt).",
+                    "The stored password could not be decrypted (corrupted or protected by a different Windows account)."),
+                ex);
         }
     }
+}
+
+/// <summary>DPAPI-Blob ist unlesbar (beschädigt, anderer Benutzer, falsches Konto).</summary>
+public sealed class SecretProtectorException : Exception
+{
+    public SecretProtectorException(string message, Exception? inner = null) : base(message, inner) { }
 }
