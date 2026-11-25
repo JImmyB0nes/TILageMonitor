@@ -37,6 +37,12 @@ public sealed record HomeAssistantInput(
 
     /// <summary>Version der App fuer das Lebenszeichen.</summary>
     public string? AppVersion { get; init; }
+
+    /// <summary>
+    /// Letzter erfolgreicher Datenstand, auch wenn der Konnektor gerade nicht antwortet. Die
+    /// Ablaufdaten bleiben gueltig – sie sollen bei einem Ausfall nicht verschwinden.
+    /// </summary>
+    public ConnectorSnapshot? LastKnownSnapshot { get; init; }
 }
 
 /// <summary>
@@ -53,6 +59,9 @@ public static class HomeAssistantStates
         var slug = Slug(input.Name);
         var list = new List<HomeAssistantEntity>();
         var snapshot = input.Reachable ? input.Snapshot : null;
+        // Ist nur GetCards gescheitert, weiss niemand, was steckt – dann "unbekannt" statt
+        // "keine Karte". Sonst meldet Home Assistant eine gezogene SMC-B, die gar nicht fehlt.
+        var cardsKnown = snapshot is not null && !snapshot.Warnings.Any(w => w.Contains("GetCards", StringComparison.Ordinal));
 
         string Id(string domain, string key) => $"{domain}.{Prefix}_{slug}_{key}";
         void Add(string domain, string key, string state, Dictionary<string, object?> attributes)
@@ -85,12 +94,14 @@ public static class HomeAssistantStates
 
         var worst = input.Alerts.Count == 0 ? (ToastUrgency?)null : input.Alerts.Max(a => a.Urgency);
         var status = !input.Reachable ? "nicht_erreichbar"
+            : snapshot is null ? "abfrage_abgelehnt" // erreichbar, aber Zertifikat/Aufrufkontext abgelehnt
             : worst == ToastUrgency.Error ? "stoerung"
             : worst == ToastUrgency.Warning ? "warnung"
             : "ok";
         Add("sensor", "status", status,
             Attr("Status", "mdi:shield-check",
-                ("hinweise", input.Alerts.Select(a => a.Title).ToArray())));
+                ("hinweise", input.Alerts.Select(a => a.Title).ToArray()),
+                ("fehler", snapshot is null ? input.LastError : null)));
 
         Add("binary_sensor", "vpn_ti", OnOff(snapshot?.Resource?.IsTiOnline),
             Attr("VPN TI", "mdi:vpn",
@@ -112,7 +123,7 @@ public static class HomeAssistantStates
                 ("state_class", "measurement"),
                 ("fehler", activeErrors)));
 
-        Add("sensor", "karten", snapshot is null ? "unknown" : snapshot.Cards.Count.ToString(CultureInfo.InvariantCulture),
+        Add("sensor", "karten", !cardsKnown ? "unknown" : snapshot!.Cards.Count.ToString(CultureInfo.InvariantCulture),
             Attr("Karten gesteckt", "mdi:card-account-details",
                 ("state_class", "measurement"),
                 ("karten", snapshot?.Cards.Select(c => c.DisplayName).ToArray())));
@@ -124,14 +135,14 @@ public static class HomeAssistantStates
                 ("getrennt", snapshot?.Terminals.Where(t => t.Connected == false).Select(t => string.IsNullOrWhiteSpace(t.Name) ? t.CtId : t.Name).ToArray())));
 
         var smcb = snapshot?.Cards.FirstOrDefault(c => c.IsSmcB);
-        Add("binary_sensor", "smcb_gesteckt", snapshot is null ? "unknown" : smcb is null ? "off" : "on",
+        Add("binary_sensor", "smcb_gesteckt", !cardsKnown ? "unknown" : smcb is null ? "off" : "on",
             Attr("SMC-B gesteckt", "mdi:card-account-details-outline",
                 ("device_class", "plug"),
                 ("inhaber", smcb?.CardHolderName)));
         if (smcb is not null)
         {
             var pin = smcb.PinStates.FirstOrDefault();
-            Add("sensor", "smcb_pin", pin is null ? "unknown" : (pin.Error is not null ? "unbekannt" : pin.Status.ToLowerInvariant()),
+            Add("sensor", "smcb_pin", pin is null || string.IsNullOrWhiteSpace(pin.Status) ? "unknown" : (pin.Error is not null ? "unbekannt" : pin.Status.ToLowerInvariant()),
                 Attr("SMC-B PIN", "mdi:form-textbox-password",
                     ("verifiziert", pin?.IsVerified),
                     ("versuche_uebrig", pin?.LeftTries)));
@@ -150,12 +161,16 @@ public static class HomeAssistantStates
                 ("device_class", "timestamp")));
 
         // --- Zertifikate: je Karte ein Sensor mit Resttagen -----------------------------
-        if (snapshot is not null)
+        // Ablaufdaten auch bei Ausfall aus dem letzten bekannten Stand – sie aendern sich nicht,
+        // nur weil der Konnektor gerade schweigt.
+        var certSource = cardsKnown ? snapshot : input.LastKnownSnapshot ?? snapshot;
+        if (certSource is not null)
         {
-            var subjects = ConnectorCertificateExpiry.Collect(snapshot, input.ClientCertificateSubject, input.ClientCertificateNotAfter);
+            var snapshotForCerts = certSource;
+            var subjects = ConnectorCertificateExpiry.Collect(snapshotForCerts, input.ClientCertificateSubject, input.ClientCertificateNotAfter);
             foreach (var subject in subjects)
             {
-                var card = snapshot.Cards.FirstOrDefault(c => subject.Key.EndsWith(":" + (string.IsNullOrWhiteSpace(c.Iccsn) ? c.CardHandle : c.Iccsn), StringComparison.Ordinal));
+                var card = snapshotForCerts.Cards.FirstOrDefault(c => subject.Key.EndsWith(":" + (string.IsNullOrWhiteSpace(c.Iccsn) ? c.CardHandle : c.Iccsn), StringComparison.Ordinal));
                 var kindKey = subject.Kind switch
                 {
                     ConnectorCertificateKind.SmcB => "smcb",
@@ -174,7 +189,7 @@ public static class HomeAssistantStates
                 var days = ConnectorCertificateExpiry.DaysLeft(subject.NotAfter, input.Now);
                 var label = subject.Kind == ConnectorCertificateKind.ClientSystem
                     ? $"{kindLabel} Ablauf"
-                    : $"{kindLabel} {Holder(card, snapshot)} Ablauf".Replace("  ", " ");
+                    : $"{kindLabel} {Holder(card, snapshotForCerts)} Ablauf".Replace("  ", " ");
                 Add("sensor", $"{kindKey}{suffix}_ablauf", days.ToString(CultureInfo.InvariantCulture),
                     Attr(label, subject.Kind == ConnectorCertificateKind.ClientSystem ? "mdi:certificate" : "mdi:card-bulleted-outline",
                         ("unit_of_measurement", "d"),
@@ -183,7 +198,7 @@ public static class HomeAssistantStates
                         ("warnstufe", ConnectorCertificateExpiry.StageFor(days)),
                         ("kartentyp", kindLabel),
                         ("inhaber", card?.CardHolderName is { Length: > 0 } h ? h : null),
-                        ("terminal", card is null ? null : TerminalName(card, snapshot)),
+                        ("terminal", card is null ? null : TerminalName(card, snapshotForCerts)),
                         ("slot", card?.SlotId),
                         ("iccsn", card?.Iccsn)));
             }
@@ -519,7 +534,9 @@ public static class HomeAssistantMqtt
 
             // Gezogene Karten: leere Konfiguration loescht die Entitaet in Home Assistant.
             // Nur wenn der Konnektor geantwortet hat – sonst verschwaenden alle Karten bei jedem Ausfall.
-            if (input.Snapshot is not null)
+            var cardsKnown = input.Reachable && input.Snapshot is not null
+                && !input.Snapshot.Warnings.Any(w => w.Contains("GetCards", StringComparison.Ordinal));
+            if (cardsKnown)
             {
                 foreach (var gone in SentConfigs.Keys.Where(t => !current.Contains(t)).ToList())
                 {

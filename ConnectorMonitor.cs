@@ -172,6 +172,7 @@ public sealed class ConnectorMonitor : IDisposable
             // noch auf "Karte rein" steht – dieselbe Begruendung, die fuer LastSnapshot gilt.
             LastPresence = null;
             LastEvent = null;
+            _ = HomeAssistantMqtt.StopAsync(); // Home Assistant: "nicht verfuegbar" statt alter Werte
             Updated?.Invoke();
             return;
         }
@@ -184,7 +185,13 @@ public sealed class ConnectorMonitor : IDisposable
         _loop = Task.Run(() => LoopAsync(token), token);
     }
 
-    public void Stop() => StopCore(keepAlertState: false);
+    public void Stop()
+    {
+        StopCore(keepAlertState: false);
+        // Ohne Ueberwachung kommen keine Daten mehr – Home Assistant soll das als
+        // "nicht verfuegbar" sehen statt alter Werte mit "online".
+        _ = HomeAssistantMqtt.StopAsync();
+    }
 
     private void StopCore(bool keepAlertState)
     {
@@ -425,7 +432,8 @@ public sealed class ConnectorMonitor : IDisposable
             DateTime.Now)
         {
             Machine = Environment.MachineName,
-            AppVersion = AppVersionText
+            AppVersion = AppVersionText,
+            LastKnownSnapshot = LastSnapshot
         };
         _ = Task.Run(() => HomeAssistantPublisher.PublishAsync(settings, input, ct), CancellationToken.None);
     }

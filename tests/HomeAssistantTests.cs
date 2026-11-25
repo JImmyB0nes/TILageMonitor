@@ -78,6 +78,37 @@ public class HomeAssistantTests
     }
 
     [Fact]
+    public void Failed_card_query_reports_unknown_instead_of_card_removed()
+    {
+        var snapshot = Snapshot();
+        snapshot.Cards.Clear();
+        snapshot.Warnings.Add("Karten (GetCards): Zeitüberschreitung");
+        var states = HomeAssistantStates.Build(Input(snapshot: snapshot)).ToDictionary(e => e.EntityId);
+
+        Assert.Equal("unknown", states["binary_sensor.tilage_praxis_dr_mueller_smcb_gesteckt"].State);
+        Assert.Equal("unknown", states["sensor.tilage_praxis_dr_mueller_karten"].State);
+    }
+
+    [Fact]
+    public void Rejected_query_is_not_reported_as_ok()
+    {
+        var input = new HomeAssistantInput("Praxis", true, null, [], null, null, null, "4204 – Clientsystem nicht authentifiziert", Now);
+        var status = HomeAssistantStates.Build(input).Single(e => e.Key == "status");
+
+        Assert.Equal("abfrage_abgelehnt", status.State);
+    }
+
+    [Fact]
+    public void Expiry_sensors_survive_an_outage_from_last_known_data()
+    {
+        var withLast = new HomeAssistantInput("Praxis Dr. Müller", false, null, [], null, null, null, "weg", Now) { LastKnownSnapshot = Snapshot() };
+        var expiry = HomeAssistantStates.Build(withLast).Where(e => e.Key.EndsWith("_ablauf", StringComparison.Ordinal)).ToList();
+
+        Assert.Equal(3, expiry.Count);
+        Assert.Equal("off", HomeAssistantStates.Build(withLast).Single(e => e.Key == "erreichbar").State);
+    }
+
+    [Fact]
     public void Json_contains_state_and_skips_null_attributes()
     {
         var entity = new HomeAssistantEntity("sensor.x", "12", new Dictionary<string, object?> { ["unit_of_measurement"] = "d", ["iccsn"] = null });

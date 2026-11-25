@@ -418,6 +418,14 @@ public partial class ConnectorWindow : Window
         current.HomeAssistantEnabled = HaEnabledToggle.IsChecked == true;
         current.HomeAssistantUrl = HaUrlBox.Text.Trim();
         current.HomeAssistantName = HaNameBox.Text.Trim();
+        // Ohne eingetragenen Namen den jetzt abgeleiteten festschreiben. Sonst wuerde aus dem
+        // SMC-B-Inhaber beim Ziehen der Karte die IP – und Home Assistant saehe ein neues Geraet.
+        if (current.HomeAssistantEnabled && current.HomeAssistantName.Length == 0)
+        {
+            var derived = ConnectorMonitor.HomeAssistantName(current, _snapshot ?? _ownerMain.ConnectorMonitor.LastSnapshot);
+            current.HomeAssistantName = derived;
+            HaNameBox.Text = derived;
+        }
         if (HaTokenBox.Password.Length > 0)
             current.HomeAssistantTokenProtected = SecretProtector.Protect(HaTokenBox.Password.Trim());
         current.HomeAssistantTransport = HaMqttRadio.IsChecked == true ? "mqtt" : "rest";
@@ -941,9 +949,9 @@ public partial class ConnectorWindow : Window
             tile.Focusable = true;
             tile.ToolTip = L("Details anzeigen", "Show details");
             System.Windows.Automation.AutomationProperties.SetName(tile, $"{label}: {value}");
-            var normal = tile.BorderBrush;
             tile.MouseEnter += (_, _) => tile.BorderBrush = Brush("AppIconForeground");
-            tile.MouseLeave += (_, _) => tile.BorderBrush = normal ?? Brush("BorderSubtle");
+            // Zuruecksetzen statt merken: so greift wieder der Stil samt Themenwechsel.
+            tile.MouseLeave += (_, _) => tile.ClearValue(Border.BorderBrushProperty);
             tile.MouseLeftButtonUp += (_, _) => onClick();
             tile.KeyDown += (_, e) =>
             {
@@ -3295,10 +3303,15 @@ public partial class ConnectorWindow : Window
         var list = new List<ConnectorCalendarEntry>();
         foreach (var card in CardOrder(snapshot.Cards))
         {
-            // Versichertenkarten gehoeren nicht in einen Praxiskalender.
-            if (card.IsEgk)
+            // Dieselbe Auswahl wie im Bereich Zertifikate: SMC-B, HBA, gSMC-KT – keine eGK.
+            if (!card.HasTrackedCertificate)
                 continue;
             var owner = card.CardHolderName.Length > 0 ? $"{KindOf(card)} {card.CardHolderName}" : card.DisplayName;
+            if (card.IsSmcKt)
+            {
+                var ct = snapshot.Terminals.FirstOrDefault(t => string.Equals(t.CtId, card.CtId, StringComparison.OrdinalIgnoreCase));
+                owner = $"gSMC-KT {L("Terminal", "terminal")} {(string.IsNullOrWhiteSpace(ct?.Name) ? card.CtId : ct!.Name)}";
+            }
             foreach (var cert in card.Certificates.Where(c => c.NotAfter != default))
                 list.Add(new ConnectorCalendarEntry(cert.CertRef, owner, cert.NotAfter));
             if (card.Certificates.Count == 0 && card.CertificateExpirationDate is { } expiry && expiry != default)
