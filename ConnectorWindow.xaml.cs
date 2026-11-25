@@ -24,6 +24,13 @@ public partial class ConnectorWindow : Window
         _ownerMain = owner;
 
         LoadForm(owner.GetSettingsSnapshot().Connector);
+        CertificatesEmpty.Child = EmptyState("\uEB95", L("Noch keine Ablaufdaten", "No expiry dates yet"),
+            L("Sobald der Konnektor SMC-B, HBA oder gSMC-KT meldet, stehen hier die Restlaufzeiten – sortiert nach Dringlichkeit.",
+              "As soon as the connector reports an SMC-B, HBA or gSMC-KT, the remaining validity appears here – sorted by urgency."),
+            L("Zu den Karten", "Go to cards"), () => Tabs.SelectedItem = CardsTab);
+        HistoryEmpty.Child = EmptyState("\uE81C", L("Noch kein Verlauf", "No history yet"),
+            L("Der Verlauf füllt sich mit jedem Abruf, solange „Verlauf lokal speichern“ unter „Verbindung → Verhalten“ eingeschaltet ist.",
+              "The history fills with every poll while \u201CStore history locally\u201D is enabled under \u201CConnection → Behaviour\u201D."));
         Closed += (_, _) =>
         {
             // Das Abonnement haelt das Fenster ueber den Monitor lebendig, und der Rueckruf
@@ -110,6 +117,23 @@ public partial class ConnectorWindow : Window
         HaStatusText.Text = text;
     }
 
+    private void HaTransport_Changed(object sender, RoutedEventArgs e) => UpdateHaTransport();
+
+    private void UpdateHaTransport()
+    {
+        if (HaMqttPanel is null || HaRestPanel is null || HaTransportHint is null)
+            return;
+        var mqtt = HaMqttRadio.IsChecked == true;
+        HaMqttPanel.Visibility = mqtt ? Visibility.Visible : Visibility.Collapsed;
+        HaRestPanel.Visibility = mqtt ? Visibility.Collapsed : Visibility.Visible;
+        HaTransportHint.Text = mqtt
+            ? L("Jede Praxis wird ein eigenes Gerät in Home Assistant. Ist der PC aus oder die App beendet, wird das Gerät sofort „nicht verfügbar“. Voraussetzung: MQTT-Broker (z. B. Mosquitto-Add-on) und die MQTT-Integration.",
+                "Each practice becomes its own device in Home Assistant. If the PC is off or the app is closed, the device turns \u201Cunavailable\u201D right away. Requires an MQTT broker (e.g. the Mosquitto add-on) and the MQTT integration.")
+            : L("Einfach einzurichten, nur Adresse und Token. Die Sensoren lassen sich in Home Assistant aber nicht bearbeiten und erscheinen nach einem Neustart erst mit dem nächsten Abruf.",
+                "Simple to set up – just address and token. The sensors cannot be edited in Home Assistant and reappear after a restart only with the next poll.");
+        UpdateHaPreview();
+    }
+
     private void HaNameBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => UpdateHaPreview();
 
     private void UpdateHaPreview()
@@ -120,13 +144,19 @@ public partial class ConnectorWindow : Window
         settings.HomeAssistantName = HaNameBox.Text;
         var name = ConnectorMonitor.HomeAssistantName(settings, _snapshot ?? _ownerMain.ConnectorMonitor.LastSnapshot);
         var slug = HomeAssistantStates.Slug(name);
-        HaEntityPreview.Text = $"binary_sensor.{HomeAssistantStates.Prefix}_{slug}_erreichbar\n" +
-                               $"binary_sensor.{HomeAssistantStates.Prefix}_{slug}_vpn_ti\n" +
+        HaEntityPreview.Text = (HaMqttRadio?.IsChecked == true ? L($"Gerät „{name}“\n", $"Device \u201C{name}\u201D\n") : "") +
+                               $"binary_sensor.{HomeAssistantStates.Prefix}_{slug}_erreichbar\n" +
+                               $"sensor.{HomeAssistantStates.Prefix}_{slug}_app_lebenszeichen\n" +
                                $"sensor.{HomeAssistantStates.Prefix}_{slug}_smcb_…_ablauf";
     }
 
     private async void HaTest_Click(object sender, RoutedEventArgs e)
     {
+        if (HaMqttRadio.IsChecked == true)
+        {
+            await TestMqttAsync();
+            return;
+        }
         var url = HaUrlBox.Text.Trim();
         var token = HaTokenBox.Password.Length > 0
             ? HaTokenBox.Password
@@ -147,6 +177,36 @@ public partial class ConnectorWindow : Window
             HaStatusDot.Fill = Brush(error is null ? "StatusOk" : "StatusOutage");
             HaStatusText.Text = error ?? L("Verbindung zu Home Assistant steht. Speichern, damit gesendet wird.",
                 "Connected to Home Assistant. Save to start sending.");
+        }
+        finally
+        {
+            HaTestButton.IsEnabled = true;
+        }
+    }
+
+    private async Task TestMqttAsync()
+    {
+        var host = MqttHostBox.Text.Trim();
+        if (host.Length == 0)
+        {
+            HaStatusDot.Fill = Brush("StatusPartial");
+            HaStatusText.Text = L("Bitte den MQTT-Broker eintragen.", "Please enter the MQTT broker.");
+            return;
+        }
+        int.TryParse(MqttPortBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var port);
+        var password = MqttPasswordBox.Password.Length > 0
+            ? MqttPasswordBox.Password
+            : SafeUnprotect(_ownerMain.GetSettingsSnapshot().Connector.MqttPasswordProtected);
+        HaTestButton.IsEnabled = false;
+        HaStatusDot.Fill = Brush("StatusEmpty");
+        HaStatusText.Text = L("Prüfe …", "Checking …");
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var error = await HomeAssistantMqtt.TestAsync(host, port, MqttTlsToggle.IsChecked == true, MqttUserBox.Text, password, cts.Token);
+            HaStatusDot.Fill = Brush(error is null ? "StatusOk" : "StatusOutage");
+            HaStatusText.Text = error ?? L("Anmeldung am MQTT-Broker klappt. Speichern, damit gesendet wird.",
+                "Login to the MQTT broker works. Save to start sending.");
         }
         finally
         {
@@ -320,6 +380,13 @@ public partial class ConnectorWindow : Window
         HaUrlBox.Text = s.HomeAssistantUrl;
         HaNameBox.Text = s.HomeAssistantName;
         HaTokenHint.Text = string.IsNullOrEmpty(s.HomeAssistantTokenProtected) ? "" : L("gespeichert", "saved");
+        MqttHostBox.Text = s.MqttHost;
+        MqttPortBox.Text = s.MqttPort.ToString(CultureInfo.InvariantCulture);
+        MqttTlsToggle.IsChecked = s.MqttUseTls;
+        MqttUserBox.Text = s.MqttUser;
+        MqttPasswordHint.Text = string.IsNullOrEmpty(s.MqttPasswordProtected) ? "" : L("gespeichert", "saved");
+        (s.HomeAssistantUsesMqtt ? HaMqttRadio : HaRestRadio).IsChecked = true;
+        UpdateHaTransport();
         UpdateHaPreview();
     }
 
@@ -353,6 +420,14 @@ public partial class ConnectorWindow : Window
         current.HomeAssistantName = HaNameBox.Text.Trim();
         if (HaTokenBox.Password.Length > 0)
             current.HomeAssistantTokenProtected = SecretProtector.Protect(HaTokenBox.Password.Trim());
+        current.HomeAssistantTransport = HaMqttRadio.IsChecked == true ? "mqtt" : "rest";
+        current.MqttHost = MqttHostBox.Text.Trim();
+        if (int.TryParse(MqttPortBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mqttPort) && mqttPort is > 0 and < 65536)
+            current.MqttPort = mqttPort;
+        current.MqttUseTls = MqttTlsToggle.IsChecked == true;
+        current.MqttUser = MqttUserBox.Text.Trim();
+        if (MqttPasswordBox.Password.Length > 0)
+            current.MqttPasswordProtected = SecretProtector.Protect(MqttPasswordBox.Password);
         if (BasicPasswordBox.Password.Length > 0)
             current.BasicAuthPasswordProtected = SecretProtector.Protect(BasicPasswordBox.Password);
         else if (ClearBasicPasswordToggle.IsChecked == true)
@@ -753,17 +828,20 @@ public partial class ConnectorWindow : Window
 
         // Kennzahlen direkt im Banner, damit sie nicht als Textkoloss unter dem Titel untergehen.
         StatusChips.Children.Clear();
-        StatusChips.Children.Add(AmpelChip(L("Erreichbar", "Reachable"), true));
-        StatusChips.Children.Add(AmpelChip(L("VPN TI", "VPN TI"), snapshot.Resource?.IsTiOnline));
-        StatusChips.Children.Add(AmpelChip(L("VPN SIS", "VPN SIS"), snapshot.Resource?.IsSisOnline));
+        var last24 = LoadLast24();
+        StatusChips.Children.Add(Kpi(L("Erreichbar", "Reachable"), L("ja", "yes"), "StatusOk", dot: true,
+            () => Explain(KpiTopic.Reachable), last24 is null ? null : Sparkline(last24[ConnectorHistoryLane.Reachable])));
+        StatusChips.Children.Add(AmpelChip(L("VPN TI", "VPN TI"), snapshot.Resource?.IsTiOnline, () => Explain(KpiTopic.VpnTi)));
+        StatusChips.Children.Add(AmpelChip(L("VPN SIS", "VPN SIS"), snapshot.Resource?.IsSisOnline, () => Explain(KpiTopic.VpnSis)));
         var live = _ownerMain.ConnectorMonitor.SubscriptionsAlive && _ownerMain.ConnectorMonitor.EventStreamActive;
-        StatusChips.Children.Add(AmpelChip(L("Live-Ereignisse", "Live events"), live));
-        StatusChips.Children.Add(Kpi(L("Karten", "Cards"), snapshot.Cards.Count.ToString()));
-        StatusChips.Children.Add(Kpi(L("Terminals", "Terminals"), snapshot.Terminals.Count.ToString()));
+        StatusChips.Children.Add(AmpelChip(L("Live-Ereignisse", "Live events"), live, () => Explain(KpiTopic.LiveEvents)));
+        StatusChips.Children.Add(Kpi(L("Karten", "Cards"), snapshot.Cards.Count.ToString(), onClick: () => Tabs.SelectedItem = CardsTab));
+        StatusChips.Children.Add(Kpi(L("Terminals", "Terminals"), snapshot.Terminals.Count.ToString(), onClick: () => Tabs.SelectedItem = TerminalsTab));
 
         UpdateNavCounts(snapshot);
         RenderAlerts(alerts, snapshot.Warnings);
         RenderPresence();
+        RenderLast24(last24);
         RenderConnectorInfo(snapshot);
         RenderSubscriptions(snapshot);
         RenderCards(snapshot);
@@ -808,18 +886,18 @@ public partial class ConnectorWindow : Window
     /// Kennzahl im Banner: winzige Bezeichnung, darunter der Wert. So ist der Zustand auf
     /// einen Blick lesbar, ohne dass vier gleich garte Kapseln aneinandergeklebt wirken.
     /// </summary>
-    private Border AmpelChip(string label, bool? ok)
+    private Border AmpelChip(string label, bool? ok, Action? onClick = null)
     {
         var color = ok is true ? "StatusOk" : ok is false ? "StatusOutage" : "StatusEmpty";
         var value = ok is true ? L("ja", "yes") : ok is false ? L("nein", "no") : L("unbekannt", "unknown");
-        return Kpi(label, value, color, dot: true);
+        return Kpi(label, value, color, dot: true, onClick);
     }
 
     /// <summary>
     /// Kennzahl-Kachel im Kopf: oben die Bezeichnung, darunter groß der Wert – bei Ampelwerten
     /// mit farbigem Punkt davor. Alle Kacheln sind gleich breit (UniformGrid).
     /// </summary>
-    private Border Kpi(string label, string value, string? colorKey = null, bool dot = false)
+    private Border Kpi(string label, string value, string? colorKey = null, bool dot = false, Action? onClick = null, UIElement? extra = null)
     {
         var panel = new StackPanel();
         panel.Children.Add(new TextBlock
@@ -853,7 +931,341 @@ public partial class ConnectorWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis
         });
         panel.Children.Add(line);
-        return new Border { Child = panel, Style = (Style)FindResource("KpiStyle") };
+        if (extra is not null)
+            panel.Children.Add(extra);
+        var tile = new Border { Child = panel, Style = (Style)FindResource("KpiStyle") };
+        if (onClick is not null)
+        {
+            // Klickbar: Mauszeiger, leichte Hervorhebung, Tastatur (Enter/Leertaste).
+            tile.Cursor = System.Windows.Input.Cursors.Hand;
+            tile.Focusable = true;
+            tile.ToolTip = L("Details anzeigen", "Show details");
+            System.Windows.Automation.AutomationProperties.SetName(tile, $"{label}: {value}");
+            var normal = tile.BorderBrush;
+            tile.MouseEnter += (_, _) => tile.BorderBrush = Brush("AppIconForeground");
+            tile.MouseLeave += (_, _) => tile.BorderBrush = normal ?? Brush("BorderSubtle");
+            tile.MouseLeftButtonUp += (_, _) => onClick();
+            tile.KeyDown += (_, e) =>
+            {
+                if (e.Key is System.Windows.Input.Key.Enter or System.Windows.Input.Key.Space)
+                {
+                    onClick();
+                    e.Handled = true;
+                }
+            };
+        }
+        return tile;
+    }
+
+    /// <summary>Letzte 24 Stunden aus dem lokalen Verlauf; null, wenn der Verlauf aus ist oder leer.</summary>
+    private Dictionary<ConnectorHistoryLane, ConnectorHistoryCell[]>? LoadLast24()
+    {
+        if (!_ownerMain.GetSettingsSnapshot().Connector.HistoryEnabled)
+            return null;
+        try
+        {
+            var hours = ConnectorHistoryTimeline.LastHours(ConnectorHistoryStore.Load(), DateTime.Now);
+            return hours.Values.Any(cells => cells.Any(c => c.State != ConnectorHistoryState.NoData)) ? hours : null;
+        }
+        catch
+        {
+            return null; // Verlauf unlesbar – die Uebersicht kommt auch ohne aus
+        }
+    }
+
+    private static string CellColor(ConnectorHistoryCell cell) => cell.State switch
+    {
+        ConnectorHistoryState.Ok => "StatusOk",
+        ConnectorHistoryState.Partial => "StatusPartial",
+        ConnectorHistoryState.Down => "StatusOutage",
+        _ => "ChipBackground"
+    };
+
+    /// <summary>Winzige Verlaufskurve fuer eine Kennzahl: 24 Saeulen, Hoehe = Anteil erreichbar.</summary>
+    private FrameworkElement Sparkline(ConnectorHistoryCell[] cells)
+    {
+        var grid = new Grid { Height = 16, Margin = new Thickness(0, 8, 0, 0) };
+        for (var i = 0; i < cells.Length; i++)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var cell = cells[i];
+            var height = cell.Percent is { } pct ? Math.Max(3, 16 * pct / 100.0) : 3;
+            var bar = new Border
+            {
+                Height = height,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                CornerRadius = new CornerRadius(1.5),
+                Margin = new Thickness(0.75, 0, 0.75, 0),
+                Background = Brush(CellColor(cell)),
+                Opacity = cell.State == ConnectorHistoryState.NoData ? 1 : 0.9
+            };
+            Grid.SetColumn(bar, i);
+            grid.Children.Add(bar);
+        }
+        grid.ToolTip = ConnectorHistoryTimeline.Availability(cells) is { } a
+            ? L($"Letzte 24 h: {a:0.#} % erreichbar", $"Last 24 h: {a:0.#} % reachable")
+            : L("Letzte 24 h: keine Daten", "Last 24 h: no data");
+        return grid;
+    }
+
+    /// <summary>Zeitleiste der letzten 24 Stunden auf der Uebersicht.</summary>
+    private void RenderLast24(Dictionary<ConnectorHistoryLane, ConnectorHistoryCell[]>? hours)
+    {
+        if (hours is null)
+        {
+            Last24Card.Visibility = Visibility.Collapsed;
+            return;
+        }
+        Last24Grid.Children.Clear();
+        Last24Grid.RowDefinitions.Clear();
+        Last24Grid.ColumnDefinitions.Clear();
+        Last24Grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
+        for (var i = 0; i < 24; i++)
+            Last24Grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var lanes = new (ConnectorHistoryLane Lane, string Label)[]
+        {
+            (ConnectorHistoryLane.Reachable, L("Erreichbar", "Reachable")),
+            (ConnectorHistoryLane.VpnTi, "VPN TI"),
+            (ConnectorHistoryLane.VpnSis, "VPN SIS"),
+            (ConnectorHistoryLane.SmcB, L("SMC-B", "SMC-B")),
+            (ConnectorHistoryLane.Hba, "HBA")
+        };
+        var now = DateTime.Now;
+        var firstHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0).AddHours(-23);
+        var row = 0;
+        foreach (var (lane, label) in lanes)
+        {
+            var cells = hours[lane];
+            // Zeilen ohne jeden Datenpunkt (z. B. kein HBA im Einsatz) weglassen.
+            if (cells.All(c => c.State == ConnectorHistoryState.NoData))
+                continue;
+            Last24Grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(26) });
+            var text = new TextBlock { Text = label, FontSize = 12, Foreground = Brush("TextMuted"), VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetRow(text, row);
+            Last24Grid.Children.Add(text);
+            for (var i = 0; i < cells.Length; i++)
+            {
+                var cell = cells[i];
+                var from = firstHour.AddHours(i);
+                var state = cell.State switch
+                {
+                    ConnectorHistoryState.Ok => L("in Ordnung", "fine"),
+                    ConnectorHistoryState.Partial => L("zeitweise", "partly"),
+                    ConnectorHistoryState.Down => L("gestört", "down"),
+                    _ => L("keine Daten", "no data")
+                };
+                var bar = new Border
+                {
+                    Height = 16,
+                    CornerRadius = new CornerRadius(3),
+                    Margin = new Thickness(1.5, 0, 1.5, 0),
+                    Background = Brush(CellColor(cell)),
+                    ToolTip = $"{label} · {from:HH}:00–{from.AddHours(1):HH}:00 · {state}" + (cell.Percent is { } p && lane == ConnectorHistoryLane.Reachable ? $" ({p} %)" : "")
+                };
+                Grid.SetRow(bar, row);
+                Grid.SetColumn(bar, i + 1);
+                Last24Grid.Children.Add(bar);
+            }
+            row++;
+        }
+
+        // Zeitachse
+        Last24Grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        foreach (var (index, text, align) in new[] { (0, $"{firstHour:HH}:00", System.Windows.HorizontalAlignment.Left), (12, $"{firstHour.AddHours(12):HH}:00", System.Windows.HorizontalAlignment.Left), (23, L("jetzt", "now"), System.Windows.HorizontalAlignment.Right) })
+        {
+            var axis = new TextBlock { Text = text, FontSize = 10.5, Foreground = Brush("TextMuted"), HorizontalAlignment = align, Margin = new Thickness(2, 6, 2, 0) };
+            Grid.SetRow(axis, row);
+            Grid.SetColumn(axis, index + 1);
+            Grid.SetColumnSpan(axis, index == 23 ? 1 : 4);
+            if (index == 23)
+            {
+                Grid.SetColumn(axis, 21);
+                Grid.SetColumnSpan(axis, 4);
+            }
+            Last24Grid.Children.Add(axis);
+        }
+
+        var availability = ConnectorHistoryTimeline.Availability(hours[ConnectorHistoryLane.Reachable]);
+        Last24Availability.Text = availability is { } a ? $"{a:0.#} %" : "–";
+        Last24Availability.Foreground = Brush(availability is null ? "TextMuted" : availability >= 99 ? "StatusOk" : availability >= 90 ? "StatusPartial" : "StatusOutage");
+        Last24Card.Visibility = row > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private enum KpiTopic { Reachable, VpnTi, VpnSis, LiveEvents }
+
+    /// <summary>
+    /// Erklaert eine Kennzahl aus dem Kopf: was sie bedeutet, was der Konnektor gemeldet hat
+    /// und was zu tun ist. Steht oben in der Diagnose, damit Protokoll und Dienste gleich darunter liegen.
+    /// </summary>
+    private void Explain(KpiTopic topic)
+    {
+        var snapshot = _snapshot ?? _ownerMain.ConnectorMonitor.LastSnapshot;
+        var monitor = _ownerMain.ConnectorMonitor;
+        var res = snapshot?.Resource;
+        bool? ok;
+        string title, meaning;
+        var steps = new List<string>();
+        var facts = new List<(string Label, string Value, string? Color)>();
+        string Ts(DateTime? t) => t is { } v ? v.ToString("g", LocalizationService.DisplayCulture) : "–";
+
+        switch (topic)
+        {
+            case KpiTopic.Reachable:
+                ok = monitor.LastError is null && snapshot is not null;
+                title = L("Konnektor erreichbar", "Connector reachable");
+                meaning = L("Die App hat den Konnektor über das Praxisnetz abgefragt (connector.sds, EventService). „Ja“ heißt: er antwortet und akzeptiert Zertifikat und Aufrufkontext.",
+                    "The app queried the connector over the practice network (connector.sds, EventService). \u201CYes\u201D means it answers and accepts certificate and call context.");
+                if (ok == false)
+                {
+                    steps.Add(L("Ist der Konnektor eingeschaltet und im Netz (LEDs, Ping auf die IP)?", "Is the connector powered on and on the network (LEDs, ping the IP)?"));
+                    steps.Add(L("Stimmt die Adresse unter „Verbindung“? Nach einem Router-Tausch ändert sich oft die IP.", "Is the address under \u201CConnection\u201D correct? IPs often change after a router swap."));
+                    steps.Add(L("Fehler 4204 oder TLS-Fehler: Client-Zertifikat im Konnektor dem Clientsystem zuordnen.", "Error 4204 or TLS failure: assign the client certificate to the client system in the connector."));
+                }
+                facts.Add((L("Letzter Versuch", "Last attempt"), Ts(monitor.LastAttempt), null));
+                facts.Add((L("Datenstand", "Data as of"), Ts(snapshot?.RetrievedAt), null));
+                if (monitor.LastError is { } err)
+                    facts.Add((L("Fehler", "Error"), err, "StatusOutage"));
+                if (monitor.NextAttemptAt is { } next)
+                    facts.Add((L("Nächster Versuch", "Next attempt"), Ts(next), null));
+                break;
+
+            case KpiTopic.VpnTi:
+                ok = res?.IsTiOnline;
+                title = L("VPN zur Telematikinfrastruktur", "VPN to the telematics infrastructure");
+                meaning = L("Der IPsec-Tunnel zur TI über den Zugangsdienst. Ohne ihn gehen VSDM (Kartenlesen), E-Rezept, eAU, ePA und KIM nicht.",
+                    "The IPsec tunnel to the TI via the access provider. Without it, VSDM (card reading), e-prescription, eAU, ePA and KIM do not work.");
+                if (ok != true)
+                {
+                    steps.Add(L("Hat die Praxis Internet? Der Tunnel braucht ausgehend UDP 500 und 4500 (IPsec).", "Does the practice have internet? The tunnel needs outbound UDP 500 and 4500 (IPsec)."));
+                    steps.Add(L("TI-Lage im Hauptfenster prüfen – bei einer Störung des Zugangsdienstes betrifft es viele Praxen.", "Check the TI status in the main window – an access provider outage affects many practices."));
+                    steps.Add(L("Im Konnektor unter „Netzwerk / VPN“ den Zustand und die letzte Fehlermeldung ansehen; ggf. Konnektor neu starten.", "Check state and last error under \u201CNetwork / VPN\u201D in the connector; restart it if needed."));
+                    steps.Add(L("Läuft die Konnektor-Lizenz bzw. die Registrierung beim Zugangsdienst noch?", "Is the connector licence or access provider registration still valid?"));
+                }
+                facts.Add(("Status", res?.VpnTiStatus ?? L("nicht gemeldet", "not reported"), ok == false ? "StatusOutage" : null));
+                facts.Add((L("Seit", "Since"), Ts(res?.VpnTiTimestamp), null));
+                break;
+
+            case KpiTopic.VpnSis:
+                ok = res?.IsSisOnline;
+                title = L("VPN zum Secure Internet Service (SIS)", "VPN to the Secure Internet Service (SIS)");
+                meaning = L("Über SIS leitet der Konnektor normalen Internetverkehr der Praxis gesichert weiter. Das ist ein optionaler Dienst: Nur wenn die Praxis-PCs ihr Internet über den Konnektor bekommen (Reihenbetrieb mit SIS), muss er „ja“ zeigen.",
+                    "Via SIS the connector forwards the practice's regular internet traffic securely. It is optional: only if the practice PCs get their internet through the connector (inline mode with SIS) must it show \u201Cyes\u201D.");
+                if (ok != true)
+                {
+                    steps.Add(L("Parallelbetrieb oder kein SIS gebucht: „nein“ ist normal und kein Fehler.", "Parallel mode or no SIS contract: \u201Cno\u201D is normal and not an error."));
+                    steps.Add(L("Reihenbetrieb mit SIS: ohne diesen Tunnel haben die Praxis-PCs kein Internet – Zugangsdienst bzw. Konnektor-Konfiguration prüfen.", "Inline mode with SIS: without this tunnel the practice PCs have no internet – check access provider and connector configuration."));
+                }
+                facts.Add(("Status", res?.VpnSisStatus ?? L("nicht gemeldet", "not reported"), null));
+                facts.Add((L("Seit", "Since"), Ts(res?.VpnSisTimestamp), null));
+                break;
+
+            default:
+                ok = monitor.SubscriptionsAlive && monitor.EventStreamActive;
+                title = L("Live-Ereignisse", "Live events");
+                meaning = L("Der Konnektor meldet „Karte gesteckt/gezogen“ und „Terminal getrennt“ sofort an die App (CETP), statt dass sie erst beim nächsten Abruf davon erfährt.",
+                    "The connector reports \u201Ccard inserted/removed\u201D and \u201Cterminal disconnected\u201D to the app immediately (CETP) instead of at the next poll.");
+                if (ok != true)
+                {
+                    steps.Add(L("Ist „Ereignis-Abos“ unter „Verbindung → Verhalten“ eingeschaltet?", "Are \u201Cevent subscriptions\u201D enabled under \u201CConnection → Behaviour\u201D?"));
+                    steps.Add(L("Windows-Firewall: eingehende Verbindungen vom Konnektor auf den lokalen Port (ab 48150) erlauben.", "Windows firewall: allow inbound connections from the connector on the local port (from 48150)."));
+                    steps.Add(L("Ohne Abo funktioniert alles weiter – nur verzögert um das Abfrageintervall.", "Without a subscription everything still works – just delayed by the poll interval."));
+                }
+                facts.Add((L("Lauscher", "Listener"), monitor.DescribeEventStream(), null));
+                facts.Add((L("Abo beim Konnektor", "Subscription at connector"), monitor.SubscriptionsAlive ? L("aktiv", "active") : L("nicht aktiv", "inactive"), null));
+                if (monitor.LastEventNote is { } note)
+                    facts.Add((L("Letztes Ereignis", "Last event"), note, null));
+                break;
+        }
+
+        var tone = ok == true ? "StatusOk" : ok == false ? (topic == KpiTopic.VpnSis ? "StatusPartial" : "StatusOutage") : "StatusMaintenance";
+        ExplainPanel.Children.Clear();
+
+        var head = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var close = new System.Windows.Controls.Button
+        {
+            Content = new AppIcon { Glyph = "\uE711", Size = 12, Stroke = Brush("TextMuted") },
+            Width = 28,
+            Height = 28,
+            Padding = new Thickness(0),
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Top,
+            ToolTip = L("Schließen", "Close")
+        };
+        close.Click += (_, _) => ExplainCard.Visibility = Visibility.Collapsed;
+        DockPanel.SetDock(close, Dock.Right);
+        head.Children.Add(close);
+        head.Children.Add(new Border
+        {
+            Width = 40,
+            Height = 40,
+            CornerRadius = new CornerRadius(11),
+            Background = Brush(tone + "Surface"),
+            BorderBrush = Brush(tone + "Border"),
+            BorderThickness = new Thickness(1),
+            Margin = new Thickness(0, 0, 14, 0),
+            Child = new AppIcon { Glyph = ok == true ? "\uE73E" : ok == false ? "\uE7BA" : "\uE946", Size = 18, Stroke = Brush(tone) }
+        });
+        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        titles.Children.Add(new TextBlock { Text = title, FontSize = 16, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextMain") });
+        var verdict = Badge(ok == true ? L("in Ordnung", "fine") : ok == false ? L("nicht verbunden", "not connected") : L("unbekannt", "unknown"), tone, small: true);
+        verdict.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+        verdict.Margin = new Thickness(0, 5, 0, 0);
+        titles.Children.Add(verdict);
+        head.Children.Add(titles);
+        ExplainPanel.Children.Add(head);
+
+        ExplainPanel.Children.Add(new TextBlock
+        {
+            Text = meaning,
+            FontSize = 13,
+            Foreground = Brush("TextMain"),
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 20,
+            Margin = new Thickness(0, 0, 0, 14)
+        });
+
+        if (steps.Count > 0)
+        {
+            ExplainPanel.Children.Add(DetailCaption(ok == false || topic != KpiTopic.VpnSis ? L("Was tun?", "What to do?") : L("Einordnung", "Context")));
+            var list = new StackPanel { Margin = new Thickness(0, 0, 0, 14) };
+            var n = 1;
+            foreach (var step in steps)
+            {
+                var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+                row.Children.Add(new Border
+                {
+                    Width = 22,
+                    Height = 22,
+                    CornerRadius = new CornerRadius(11),
+                    Background = Brush("ChipBackground"),
+                    Margin = new Thickness(0, 0, 10, 0),
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Child = new TextBlock
+                    {
+                        Text = (n++).ToString(CultureInfo.InvariantCulture),
+                        FontSize = 11,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = Brush("TextMuted"),
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                });
+                row.Children.Add(new TextBlock { Text = step, FontSize = 13, Foreground = Brush("TextMain"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+                list.Children.Add(row);
+            }
+            ExplainPanel.Children.Add(list);
+        }
+
+        if (facts.Count > 0)
+        {
+            ExplainPanel.Children.Add(DetailCaption(L("Gemeldet", "Reported")));
+            ExplainPanel.Children.Add(PropertyList(facts));
+        }
+
+        ExplainCard.Visibility = Visibility.Visible;
+        Tabs.SelectedItem = DiagnosticsTab;
     }
 
     /// <summary>
@@ -1313,7 +1725,12 @@ public partial class ConnectorWindow : Window
 
         // Kachel: oben Kartenart als Etikett, darunter wem die Karte gehoert und welches
         // Zertifikat gemeint ist. Die grosse Zahl darunter ist die eigentliche Aussage.
+        // Erst sammeln, dann nach Dringlichkeit sortiert zeichnen: was zuerst ablaeuft, steht vorn.
+        var tiles = new List<(string TypeLabel, string Title, string Subtitle, DateTime NotAfter, string Glyph)>();
         void AddTile(string typeLabel, string title, string subtitle, DateTime notAfter, string glyph = "\uE8C7")
+            => tiles.Add((typeLabel, title, subtitle, notAfter, glyph));
+
+        void RenderTile(string typeLabel, string title, string subtitle, DateTime notAfter, string glyph)
         {
             any = true;
             var daysLeft = ConnectorCertificateExpiry.DaysLeft(notAfter, now);
@@ -1379,7 +1796,9 @@ public partial class ConnectorWindow : Window
             });
             days.Children.Add(new TextBlock
             {
-                Text = daysLeft < 0 ? L("Tage abgelaufen", "days expired") : L("Tage übrig", "days left"),
+                Text = daysLeft < 0 ? L("Tage abgelaufen", "days expired")
+                    : daysLeft >= 365 ? L($"Tage übrig · ≈ {daysLeft / 365.25:0.#} Jahre", $"days left · ≈ {daysLeft / 365.25:0.#} years")
+                    : L("Tage übrig", "days left"),
                 FontSize = 12,
                 Foreground = Brush("TextMuted"),
                 VerticalAlignment = VerticalAlignment.Bottom,
@@ -1387,7 +1806,9 @@ public partial class ConnectorWindow : Window
             });
             body.Children.Add(days);
 
-            var pct = Math.Clamp(daysLeft / 365.0, 0, 1);
+            // Kartenzertifikate laufen bis zu fuenf Jahre – auf ein Jahr skaliert waeren alle
+            // Leisten voll und sagten nichts. Fuenf Jahre machen auch 1047 gegen 1460 Tage sichtbar.
+            var pct = Math.Clamp(daysLeft / ConnectorCertificateExpiry.FullScaleDays, 0, 1);
             var bar = new Grid { Height = 6, Margin = new Thickness(0, 8, 0, 0) };
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(pct, 0.015), GridUnitType.Star) });
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - Math.Max(pct, 0.015), GridUnitType.Star) });
@@ -1437,6 +1858,9 @@ public partial class ConnectorWindow : Window
             AddTile(L("Clientsystem", "Client system"), subject,
                 L("TLS-Zertifikat der App (P12)", "TLS certificate of the app (P12)"), clientNotAfter, "\uEB95");
         }
+
+        foreach (var tile in tiles.OrderBy(t => t.NotAfter))
+            RenderTile(tile.TypeLabel, tile.Title, tile.Subtitle, tile.NotAfter, tile.Glyph);
 
         if (CertificatesEmpty is not null)
             CertificatesEmpty.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
@@ -1545,7 +1969,7 @@ public partial class ConnectorWindow : Window
             var daysLeft = (until - DateTime.Now).TotalDays;
             var warn = _ownerMain.GetSettingsSnapshot().Connector.CertificateWarningDays;
             var color = daysLeft <= 0 ? "StatusOutage" : daysLeft <= warn ? "StatusPartial" : "StatusOk";
-            var bar = ProgressBarLine(Math.Clamp(daysLeft / 365.0, 0, 1), color, 4);
+            var bar = ProgressBarLine(Math.Clamp(daysLeft / ConnectorCertificateExpiry.FullScaleDays, 0, 1), color, 4);
             bar.Margin = new Thickness(0, 8, 0, 0);
             bar.ToolTip = L($"Zertifikat gültig bis {until:dd.MM.yyyy}", $"Certificate valid until {until:yyyy-MM-dd}");
             body.Children.Add(bar);
@@ -1670,6 +2094,170 @@ public partial class ConnectorWindow : Window
         Margin = new Thickness(0, 22, 0, 10)
     };
 
+    /// <summary>
+    /// Eigenschaften als ruhige Liste in zwei Spalten: Bezeichnung links, Wert rechts, feine
+    /// Trennlinien. Werte, die man weitergibt (ICCSN, Telematik-ID), bekommen einen Kopierknopf.
+    /// </summary>
+    private Border PropertyList(IReadOnlyList<(string Label, string Value, string? Color)> props, params string[] copyable)
+    {
+        var columns = new Grid();
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var half = (props.Count + 1) / 2;
+        for (var col = 0; col < 2; col++)
+        {
+            var stack = new StackPanel();
+            var part = props.Skip(col * half).Take(half).ToList();
+            for (var i = 0; i < part.Count; i++)
+            {
+                var (label, value, color) = part[i];
+                var row = new Grid { MinHeight = 34 };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(118) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.Children.Add(new TextBlock
+                {
+                    Text = label,
+                    FontSize = 12,
+                    Foreground = Brush("TextMuted"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(0, 7, 12, 7)
+                });
+                var text = new TextBlock
+                {
+                    Text = value,
+                    FontSize = 13,
+                    Foreground = Brush(color ?? "TextMain"),
+                    FontWeight = color is null ? FontWeights.Normal : FontWeights.SemiBold,
+                    TextWrapping = TextWrapping.Wrap,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 7, 0, 7)
+                };
+                Grid.SetColumn(text, 1);
+                row.Children.Add(text);
+                if (copyable.Contains(label, StringComparer.Ordinal))
+                {
+                    var copy = CopyButton(value, label);
+                    Grid.SetColumn(copy, 2);
+                    row.Children.Add(copy);
+                }
+                stack.Children.Add(row);
+                if (i < part.Count - 1)
+                    stack.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle") });
+            }
+            Grid.SetColumn(stack, col * 2);
+            columns.Children.Add(stack);
+        }
+
+        return new Border
+        {
+            Child = columns,
+            Background = Brush("ChipBackground"),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16, 6, 16, 6)
+        };
+    }
+
+    /// <summary>Kleiner Knopf, der den Wert in die Zwischenablage legt und kurz einen Haken zeigt.</summary>
+    private System.Windows.Controls.Button CopyButton(string value, string label)
+    {
+        var icon = new AppIcon { Glyph = "\uE8C8", Size = 14, Stroke = Brush("TextMuted") };
+        var button = new System.Windows.Controls.Button
+        {
+            Content = icon,
+            Width = 28,
+            Height = 28,
+            Padding = new Thickness(0),
+            Margin = new Thickness(6, 0, 0, 0),
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = L($"{label} kopieren", $"Copy {label}")
+        };
+        System.Windows.Automation.AutomationProperties.SetName(button, L($"{label} kopieren", $"Copy {label}"));
+        button.Click += async (_, _) =>
+        {
+            try { System.Windows.Clipboard.SetText(value); }
+            catch { return; /* Zwischenablage gerade belegt */ }
+            icon.Glyph = "\uE73E";
+            icon.Stroke = Brush("StatusOk");
+            button.ToolTip = L("Kopiert", "Copied");
+            await Task.Delay(1500);
+            icon.Glyph = "\uE8C8";
+            icon.Stroke = Brush("TextMuted");
+            button.ToolTip = L($"{label} kopieren", $"Copy {label}");
+        };
+        return button;
+    }
+
+    /// <summary>
+    /// Leerer Zustand: kleine Illustration (Symbol in weichen Ringen), Ueberschrift, ein Satz
+    /// dazu, was als Naechstes zu tun ist, und optional ein Knopf, der genau das tut.
+    /// </summary>
+    private FrameworkElement EmptyState(string glyph, string title, string text, string? actionLabel = null, Action? action = null)
+    {
+        var art = new Grid { Width = 112, Height = 112, HorizontalAlignment = System.Windows.HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 16) };
+        art.Children.Add(new System.Windows.Shapes.Ellipse { Fill = Brush("ChipBackground"), Opacity = 0.55 });
+        art.Children.Add(new System.Windows.Shapes.Ellipse
+        {
+            Width = 84,
+            Height = 84,
+            Stroke = Brush("BorderSubtle"),
+            StrokeThickness = 1.2,
+            StrokeDashArray = new System.Windows.Media.DoubleCollection { 3, 3 }
+        });
+        art.Children.Add(new Border
+        {
+            Width = 56,
+            Height = 56,
+            CornerRadius = new CornerRadius(16),
+            Background = Brush("AppIconCircleBackground"),
+            Child = new AppIcon { Glyph = glyph, Size = 26, Stroke = Brush("AppIconForeground") }
+        });
+        // Zwei kleine Funken – wirkt freundlicher als ein nacktes Symbol.
+        art.Children.Add(new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = Brush("StatusMaintenance"), Opacity = 0.7, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 18, 14, 0) });
+        art.Children.Add(new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, Fill = Brush("StatusOk"), Opacity = 0.7, HorizontalAlignment = System.Windows.HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(16, 0, 0, 20) });
+
+        var panel = new StackPanel { HorizontalAlignment = System.Windows.HorizontalAlignment.Center, MaxWidth = 420, Margin = new Thickness(0, 24, 0, 24) };
+        panel.Children.Add(art);
+        panel.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMain"),
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 13,
+            Foreground = Brush("TextMuted"),
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 19,
+            Margin = new Thickness(0, 6, 0, 0)
+        });
+        if (actionLabel is not null && action is not null)
+        {
+            var button = new System.Windows.Controls.Button
+            {
+                Content = actionLabel,
+                Padding = new Thickness(16, 8, 16, 8),
+                Margin = new Thickness(0, 16, 0, 0),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+            };
+            button.Click += (_, _) => action();
+            panel.Children.Add(button);
+        }
+        return panel;
+    }
+
     /// <summary>Eigenschafts-Kachel: Bezeichnung klein, Wert darunter, optional farbig.</summary>
     private Border PropertyTile(string label, string value, string? colorKey = null)
     {
@@ -1734,11 +2322,15 @@ public partial class ConnectorWindow : Window
         CardDetailPanel.Children.Clear();
         if (card is null)
         {
-            CardDetailPanel.Children.Add(new TextBlock
-            {
-                Text = L("Keine Karte gewaehlt.", "No card selected."),
-                Foreground = Brush("TextMuted")
-            });
+            var noCards = (_snapshot?.Cards.Count ?? 0) == 0;
+            CardDetailPanel.Children.Add(noCards
+                ? EmptyState("\uE8C7", L("Noch keine Karte gesteckt", "No card inserted yet"),
+                    L("Die SMC-B oder den HBA ins Kartenterminal stecken. Die Liste aktualisiert sich von selbst, sobald der Konnektor die Karte meldet.",
+                      "Insert the SMC-B or HBA into the card terminal. The list updates by itself as soon as the connector reports the card."),
+                    L("Jetzt aktualisieren", "Refresh now"), () => RefreshButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)))
+                : EmptyState("\uE8C7", L("Karte auswählen", "Select a card"),
+                    L("Links eine Karte wählen, um PIN-Zustand, Zertifikate und Aktionen zu sehen.",
+                      "Choose a card on the left to see PIN state, certificates and actions.")));
             return;
         }
 
@@ -1797,18 +2389,12 @@ public partial class ConnectorWindow : Window
         if (props.Count > 0)
         {
             CardDetailPanel.Children.Add(DetailCaption(L("Eigenschaften", "Properties")));
-            var grid = new WrapPanel { ItemWidth = 232, Margin = new Thickness(0, 0, -10, -10) };
-            foreach (var (label, value, color) in props)
-                grid.Children.Add(PropertyTile(label, value, color));
-            CardDetailPanel.Children.Add(grid);
+            CardDetailPanel.Children.Add(PropertyList(props, "ICCSN", "Telematik-ID", "KVNR"));
         }
         if (certProps.Count > 0)
         {
             CardDetailPanel.Children.Add(DetailCaption(L("Zertifikate", "Certificates")));
-            var grid = new WrapPanel { ItemWidth = 232, Margin = new Thickness(0, 0, -10, -10) };
-            foreach (var (label, value, color) in certProps)
-                grid.Children.Add(PropertyTile(label, value, color));
-            CardDetailPanel.Children.Add(grid);
+            CardDetailPanel.Children.Add(PropertyList(certProps));
         }
 
         CardDetailPanel.Children.Add(DetailCaption(L("PIN-Zustand", "PIN state")));
@@ -2149,11 +2735,15 @@ public partial class ConnectorWindow : Window
         TerminalDetailPanel.Children.Clear();
         if (t is null)
         {
-            TerminalDetailPanel.Children.Add(new TextBlock
-            {
-                Text = L("Kein Terminal gewaehlt.", "No terminal selected."),
-                Foreground = Brush("TextMuted")
-            });
+            var noTerminals = (snapshot?.Terminals.Count ?? 0) == 0;
+            TerminalDetailPanel.Children.Add(noTerminals
+                ? EmptyState("\uE7F4", L("Noch kein Terminal", "No terminal yet"),
+                    L("Der Konnektor meldet für diesen Arbeitsplatz kein Kartenterminal. Im Infomodell das Terminal dem Arbeitsplatz zuordnen und prüfen, ob es gepairt und eingeschaltet ist.",
+                      "The connector reports no card terminal for this workplace. Assign the terminal to the workplace in the info model and check that it is paired and powered on."),
+                    L("Diagnose öffnen", "Open diagnostics"), () => Tabs.SelectedItem = DiagnosticsTab)
+                : EmptyState("\uE7F4", L("Terminal auswählen", "Select a terminal"),
+                    L("Links ein Kartenterminal wählen, um Verbindung, Arbeitsplätze und gesteckte Karten zu sehen.",
+                      "Choose a card terminal on the left to see connection, workplaces and inserted cards.")));
             return;
         }
         var cards = (snapshot?.Cards ?? new List<ConnectorCard>())
@@ -2188,10 +2778,7 @@ public partial class ConnectorWindow : Window
         if (props.Count > 0)
         {
             TerminalDetailPanel.Children.Add(DetailCaption(L("Eigenschaften", "Properties")));
-            var grid = new WrapPanel { ItemWidth = 232, Margin = new Thickness(0, 0, -10, -10) };
-            foreach (var (label, value) in props)
-                grid.Children.Add(PropertyTile(label, value));
-            TerminalDetailPanel.Children.Add(grid);
+            TerminalDetailPanel.Children.Add(PropertyList(props.Select(p => (p.Item1, p.Item2, (string?)null)).ToList(), "CtId", "IP", "MAC"));
         }
 
         TerminalDetailPanel.Children.Add(DetailCaption(L("Gesteckte Karten", "Inserted cards")));
@@ -2203,12 +2790,8 @@ public partial class ConnectorWindow : Window
                 Background = Brush("ChipBackground"),
                 CornerRadius = new CornerRadius(12),
                 Padding = new Thickness(16, 14, 16, 14),
-                Child = new TextBlock
-                {
-                    Text = L("In diesem Terminal steckt keine Karte.", "No card is inserted in this terminal."),
-                    FontSize = 12,
-                    Foreground = Brush("TextMuted")
-                }
+                Child = EmptyState("\uE8C7", L("Keine Karte gesteckt", "No card inserted"),
+                    L("In diesem Terminal steckt gerade keine Karte.", "No card is currently inserted in this terminal."))
             });
             return;
         }

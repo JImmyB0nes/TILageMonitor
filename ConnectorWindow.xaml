@@ -106,6 +106,32 @@
             </Style.Triggers>
         </Style>
 
+        <!-- Segment-Umschalter (zwei bis drei gleichrangige Optionen) -->
+        <Style x:Key="SegmentStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="7" Padding="14,6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource CardBackground}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextMain}"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextMain}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- ============================================================
            Flächen
            ============================================================ -->
@@ -707,6 +733,28 @@
                             </Grid>
                         </Border>
 
+                        <!-- Letzte 24 Stunden: je Zeile 24 Stundenbalken -->
+                        <Border x:Name="Last24Card" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,16">
+                                    <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                        <TextBlock x:Name="Last24Availability" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource TextMain}"/>
+                                        <TextBlock Text="erreichbar" FontSize="11" HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource TextMuted}"/>
+                                    </StackPanel>
+                                    <Border Style="{StaticResource IconTileStyle}">
+                                        <local:AppIcon Glyph="&#xE81C;" Style="{StaticResource IconTileIconStyle}"/>
+                                    </Border>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Letzte 24 Stunden" Style="{StaticResource SectionTitleStyle}"/>
+                                        <TextBlock Text="Je Balken eine Stunde – grün in Ordnung, gelb zeitweise, rot gestört." Style="{StaticResource SectionHintStyle}"/>
+                                    </StackPanel>
+                                </DockPanel>
+                                <Grid x:Name="Last24Grid"/>
+                            </StackPanel>
+                        </Border>
+
                         <Border x:Name="ConnectorInfoCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
                             <StackPanel>
                                 <DockPanel Margin="0,0,0,16">
@@ -726,7 +774,7 @@
             </TabItem>
 
             <!-- ============================== Karten ============================== -->
-            <TabItem Header="Karten">
+            <TabItem x:Name="CardsTab" Header="Karten">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top">
                         <TextBlock Text="Karten" Style="{StaticResource PageTitleStyle}"/>
@@ -762,7 +810,7 @@
             </TabItem>
 
             <!-- ============================ Terminals ============================ -->
-            <TabItem Header="Terminals">
+            <TabItem x:Name="TerminalsTab" Header="Terminals">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top">
                         <TextBlock Text="Terminals" Style="{StaticResource PageTitleStyle}"/>
@@ -818,14 +866,7 @@
                             </StackPanel>
                         </DockPanel>
                         <WrapPanel x:Name="CertificatesPanel" ItemWidth="300" Margin="0,0,-14,0"/>
-                        <Border x:Name="CertificatesEmpty" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
-                            <StackPanel HorizontalAlignment="Center" Margin="0,18">
-                                <local:AppIcon Glyph="&#xEB95;" Style="{StaticResource IconStyle}" Size="34"
-                                           Stroke="{DynamicResource TextMuted}" Margin="0,0,0,12"/>
-                                <TextBlock Text="Keine Zertifikate gelesen. Karte wählen und „Alle Zertifikate lesen“ verwenden."
-                                           FontSize="13" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" TextAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
+                        <Border x:Name="CertificatesEmpty" Style="{StaticResource PanelStyle}" Visibility="Collapsed"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -923,24 +964,22 @@
                                 <Grid x:Name="HistoryHoursGrid"/>
                             </StackPanel>
                         </Border>
-                        <Border x:Name="HistoryEmpty" Style="{StaticResource SubtlePanelStyle}" Visibility="Collapsed">
-                            <DockPanel>
-                                <local:AppIcon Glyph="&#xE946;" Style="{StaticResource IconStyle}" Size="14"
-                                           Stroke="{DynamicResource TextMuted}" VerticalAlignment="Top" Margin="0,1,12,0"/>
-                                <TextBlock Text="Noch kein Verlauf aufgezeichnet. Der Verlauf füllt sich mit jedem Abruf, solange „Verlauf lokal speichern“ in den Einstellungen aktiv ist."
-                                           FontSize="13" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"/>
-                            </DockPanel>
-                        </Border>
+                        <Border x:Name="HistoryEmpty" Style="{StaticResource PanelStyle}" Visibility="Collapsed"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
 
             <!-- ============================== Diagnose ============================== -->
-            <TabItem Header="Diagnose">
+            <TabItem x:Name="DiagnosticsTab" Header="Diagnose">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
                     <StackPanel>
                         <TextBlock Text="Diagnose" Style="{StaticResource PageTitleStyle}"/>
                         <TextBlock Text="Dienstverzeichnis des Konnektors und Protokoll des letzten Abrufs." Style="{StaticResource PageHintStyle}"/>
+
+                        <!-- Erklaerung zu einer angeklickten Kennzahl aus dem Kopf -->
+                        <Border x:Name="ExplainCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
+                            <StackPanel x:Name="ExplainPanel"/>
+                        </Border>
 
                         <Border x:Name="ServicesCard" Style="{StaticResource PanelStyle}" Visibility="Collapsed">
                             <StackPanel>
@@ -1141,22 +1180,31 @@
                                                            Style="{StaticResource SectionHintStyle}"/>
                                             </StackPanel>
                                         </DockPanel>
-                                        <Grid>
+                                        <!-- Weg: REST-API (Token) oder MQTT (Gerät je Praxis, Last Will) -->
+                                        <Border Background="{DynamicResource ChipBackground}" CornerRadius="9" Padding="3"
+                                                HorizontalAlignment="Left" Margin="0,0,0,8">
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="HaRestRadio" GroupName="HaTransport" Style="{StaticResource SegmentStyle}"
+                                                             Content="REST-API" Checked="HaTransport_Changed"/>
+                                                <RadioButton x:Name="HaMqttRadio" GroupName="HaTransport" Style="{StaticResource SegmentStyle}"
+                                                             Content="MQTT (empfohlen)" Checked="HaTransport_Changed"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <TextBlock x:Name="HaTransportHint" Style="{StaticResource SectionHintStyle}" Margin="0,0,0,14"/>
+
+                                        <!-- REST -->
+                                        <Grid x:Name="HaRestPanel">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="18"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-                                            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,14">
+                                            <StackPanel Grid.Column="0" Margin="0,0,0,14">
                                                 <TextBlock Text="Adresse" Style="{StaticResource FieldLabelStyle}"/>
                                                 <TextBox x:Name="HaUrlBox"
                                                          ToolTip="z. B. http://homeassistant.local:8123 oder https://…ui.nabu.casa"/>
                                             </StackPanel>
-                                            <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,14">
+                                            <StackPanel Grid.Column="2" Margin="0,0,0,14">
                                                 <DockPanel>
                                                     <TextBlock x:Name="HaTokenHint" DockPanel.Dock="Right" FontSize="11"
                                                                Foreground="{DynamicResource TextMuted}"/>
@@ -1165,12 +1213,61 @@
                                                 <PasswordBox x:Name="HaTokenBox"
                                                              ToolTip="Home Assistant → Profil → Sicherheit → Langlebige Zugriffstoken. Leer lassen, um das gespeicherte zu behalten."/>
                                             </StackPanel>
-                                            <StackPanel Grid.Row="1" Grid.Column="0">
+                                        </Grid>
+
+                                        <!-- MQTT -->
+                                        <Grid x:Name="HaMqttPanel" Visibility="Collapsed">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="18"/>
+                                                <ColumnDefinition Width="110"/>
+                                                <ColumnDefinition Width="18"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,14">
+                                                <TextBlock Text="MQTT-Broker" Style="{StaticResource FieldLabelStyle}"/>
+                                                <TextBox x:Name="MqttHostBox"
+                                                         ToolTip="Hostname oder IP des Brokers, z. B. homeassistant.local (Mosquitto-Add-on)"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,14">
+                                                <TextBlock Text="Port" Style="{StaticResource FieldLabelStyle}"/>
+                                                <TextBox x:Name="MqttPortBox" ToolTip="1883, mit TLS meist 8883"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="4" Margin="0,0,0,14" VerticalAlignment="Bottom">
+                                                <CheckBox x:Name="MqttTlsToggle" Content="TLS" Style="{DynamicResource ThemeAwareCheckBoxStyle}"
+                                                          Margin="0,0,0,6"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,14">
+                                                <TextBlock Text="Benutzer" Style="{StaticResource FieldLabelStyle}"/>
+                                                <TextBox x:Name="MqttUserBox" ToolTip="Ein Home-Assistant-Benutzer oder ein Benutzer des Mosquitto-Add-ons"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="3" Margin="0,0,0,14">
+                                                <DockPanel>
+                                                    <TextBlock x:Name="MqttPasswordHint" DockPanel.Dock="Right" FontSize="11"
+                                                               Foreground="{DynamicResource TextMuted}"/>
+                                                    <TextBlock Text="Passwort" Style="{StaticResource FieldLabelStyle}"/>
+                                                </DockPanel>
+                                                <PasswordBox x:Name="MqttPasswordBox"
+                                                             ToolTip="Leer lassen, um das gespeicherte Passwort zu behalten"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="18"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
                                                 <TextBlock Text="Name der Praxis" Style="{StaticResource FieldLabelStyle}"/>
                                                 <TextBox x:Name="HaNameBox" TextChanged="HaNameBox_TextChanged"
                                                          ToolTip="Unterscheidet mehrere Konnektoren in Home Assistant. Leer: Inhaber der SMC-B."/>
                                             </StackPanel>
-                                            <StackPanel Grid.Row="1" Grid.Column="2">
+                                            <StackPanel Grid.Column="2">
                                                 <TextBlock Text="Entitäten" Style="{StaticResource FieldLabelStyle}"/>
                                                 <TextBlock x:Name="HaEntityPreview" Style="{StaticResource MonoStyle}" Margin="0,5,0,0"/>
                                             </StackPanel>

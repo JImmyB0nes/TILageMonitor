@@ -183,6 +183,12 @@ Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf,
 **Hintergrund-Toasts (abschaltbar):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Terminal getrennt, keine SMC-B gesteckt, Transport-PIN.
 
 **Neu (unveröffentlicht):**
+- **MQTT mit Geräten je Praxis** und **Lebenszeichen** der App (Last Will, `app_lebenszeichen`).
+- **Übersicht:** Zeitleiste der letzten 24 Stunden (Erreichbar, VPN TI/SIS, SMC-B, HBA) und Mini-Verlaufskurve in der Kachel „Erreichbar“.
+- **Kennzahlen im Kopf anklickbar:** Erreichbar, VPN TI, VPN SIS und Live-Ereignisse öffnen eine Erklärung mit Ursachen und nächsten Schritten; Karten und Terminals springen in ihren Bereich.
+- **Zertifikate** nach Dringlichkeit sortiert, Ablaufleiste auf 5 Jahre skaliert.
+- **Kartendetails** als ruhige zweispaltige Liste, ICCSN/Telematik-ID mit Kopierknopf.
+- **Leere Zustände** mit Illustration und nächstem Schritt; Statusfarben im hellen Modus ruhiger (Tailwind-Töne).
 - **gSMC-KT im Blick:** die Gerätekarten der Kartenterminals erscheinen im Bereich **Zertifikate** neben SMC-B und HBA – mit Resttagen, Terminalname und Ablaufwarnung (90/30/7 Tage) samt Toast.
 - **Home-Assistant-Anbindung:** nach jedem Abruf gehen Erreichbarkeit, VPN TI/SIS, Live-Ereignisse, Karten, Terminals, SMC-B-PIN und die Restlaufzeiten von SMC-B, HBA, gSMC-KT und Clientsystem-Zertifikat als Sensoren an Home Assistant. Mehrere Praxen landen über ihren Namen getrennt in derselben Instanz (siehe unten).
 - Überarbeitete Optik: eigene Linien-Symbole statt Schrift-Glyphen, flache Statusabzeichen mit Zustandspunkt, verständlichere Anzeige der gesteckten Karte („SMC-B gesteckt · im Kartenterminal …“), Bereich **Verbindung** nicht mehr eingeklappt.
@@ -224,9 +230,12 @@ Das Diagnose-Protokoll und **Bericht kopieren** erzeugen einen Text **ohne Passw
 <details>
 <summary><strong>Home Assistant: mehrere Konnektoren überwachen</strong></summary>
 
-1. In Home Assistant unter **Profil → Sicherheit → Langlebige Zugriffstoken** ein Token anlegen.
-2. Im Konnektor-Fenster unter **Verbindung → Home Assistant** einschalten, Adresse (z. B. `http://homeassistant.local:8123` oder die Nabu-Casa-URL) und Token eintragen, **Verbindung testen**, dann **Speichern & verbinden**.
-3. **Name der Praxis** vergeben – er bildet das Kürzel der Entitäten. Leer bleibt der Inhaber der SMC-B.
+Zwei Wege stehen zur Wahl (**Verbindung → Home Assistant**):
+
+- **MQTT (empfohlen):** jede Praxis wird ein eigenes **Gerät** mit festen, umbenennbaren Sensoren (MQTT-Discovery). Ist der PC aus oder die App beendet, meldet der Broker per *Last Will* sofort **„nicht verfügbar“**. Voraussetzung: MQTT-Broker (z. B. Mosquitto-Add-on) und die MQTT-Integration. In der App Broker, Port (1883 bzw. 8883 mit TLS), Benutzer und Passwort eintragen.
+- **REST-API:** nur Adresse (z. B. `http://homeassistant.local:8123` oder die Nabu-Casa-URL) und ein **Langlebiges Zugriffstoken** (Profil → Sicherheit). Einfach, aber die Sensoren sind in Home Assistant nicht bearbeitbar und erscheinen nach einem Neustart erst mit dem nächsten Abruf.
+
+Danach **Verbindung testen**, **Name der Praxis** vergeben (bildet das Kürzel der Entitäten, leer = Inhaber der SMC-B) und **Speichern & verbinden**.
 
 Jede Praxis liefert dann u. a.:
 
@@ -244,6 +253,7 @@ Jede Praxis liefert dann u. a.:
 | `sensor.tilage_<praxis>_smckt_<iccsn>_ablauf` | Resttage gSMC-KT des Kartenterminals |
 | `sensor.tilage_<praxis>_clientsystem_ablauf` | Resttage Clientsystem-Zertifikat |
 | `sensor.tilage_<praxis>_letzter_abruf` | Zeitpunkt des letzten Abrufs |
+| `sensor.tilage_<praxis>_app_lebenszeichen` | Zeitpunkt der letzten Meldung der App (Attribute: `rechner`, `version`) |
 
 `<iccsn>` sind die letzten sechs Stellen der Kartennummer. Gezogene Karten werden auf `unavailable` gesetzt. Beispiel-Automation:
 
@@ -259,7 +269,20 @@ action:
       message: "{{ state_attr(trigger.entity_id, 'friendly_name') }}: noch {{ trigger.to_state.state }} Tage"
 ```
 
-Hinweis: Die Sensoren werden über die REST-API gesetzt. Nach einem Neustart von Home Assistant erscheinen sie wieder mit dem nächsten Abruf (Intervall in den Konnektor-Einstellungen).
+**Lebenszeichen überwachen** – meldet, wenn eine Praxis-App 15 Minuten lang nichts geschickt hat (PC aus, App beendet). Funktioniert mit REST und MQTT:
+
+```yaml
+template:
+  - binary_sensor:
+      - name: "TI-Lage Praxis Müller App läuft"
+        device_class: running
+        state: >
+          {{ (now() - as_datetime(states('sensor.tilage_praxis_mueller_app_lebenszeichen'))).total_seconds() < 900 }}
+```
+
+Unter MQTT zusätzlich: Alle Sensoren einer Praxis werden **„nicht verfügbar“**, sobald die Verbindung der App abreißt – eine Automation auf `unavailable` reicht dann.
+
+Unter REST werden die Sensoren bei jedem Abruf neu gesetzt; nach einem Neustart von Home Assistant erscheinen sie mit dem nächsten Abruf wieder.
 
 </details>
 

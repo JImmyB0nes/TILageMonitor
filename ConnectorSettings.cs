@@ -145,6 +145,28 @@ public sealed class ConnectorSettings
     [JsonPropertyName("homeAssistantName")]
     public string HomeAssistantName { get; set; } = "";
 
+    /// <summary>"rest" (Standard) oder "mqtt" – MQTT legt je Praxis ein Geraet per Discovery an.</summary>
+    [JsonPropertyName("homeAssistantTransport")]
+    public string HomeAssistantTransport { get; set; } = "rest";
+
+    [JsonIgnore]
+    public bool HomeAssistantUsesMqtt => string.Equals(HomeAssistantTransport, "mqtt", StringComparison.OrdinalIgnoreCase);
+
+    [JsonPropertyName("mqttHost")]
+    public string MqttHost { get; set; } = "";
+
+    [JsonPropertyName("mqttPort")]
+    public int MqttPort { get; set; } = 1883;
+
+    [JsonPropertyName("mqttUseTls")]
+    public bool MqttUseTls { get; set; }
+
+    [JsonPropertyName("mqttUser")]
+    public string MqttUser { get; set; } = "";
+
+    [JsonPropertyName("mqttPasswordProtected")]
+    public string? MqttPasswordProtected { get; set; }
+
     /// <summary>
     /// Schluessel der Angaben, deren Aenderung einen Neustart der Ueberwachung braucht. Alles
     /// andere (Toast-Filter, Verlauf, Karte im Hauptfenster) liest der Monitor bei

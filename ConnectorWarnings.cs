@@ -63,6 +63,9 @@ public static class ConnectorCertificateExpiry
         return stage;
     }
 
+    /// <summary>Volle Leiste in der Anzeige: fuenf Jahre, die uebliche Laufzeit eines Kartenzertifikats.</summary>
+    public const double FullScaleDays = 5 * 365.25;
+
     /// <summary>Ressourcenschluessel fuer Anzeige-Farben: Outage ≤ 7 Tage, Partial ≤ 30, Maintenance ≤ 90.</summary>
     public static string BrushKeyFor(int daysLeft) => StageFor(daysLeft) switch
     {

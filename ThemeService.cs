@@ -74,18 +74,18 @@ public static class ThemeService
             SetBrush(resources, "ScrollBarThumbHoverBackground", "#94A3B8");
             SetBrush(resources, "ScrollBarThumbPressedBackground", "#64748B");
             // Ampel / status (heatmap-aligned)
-            SetBrush(resources, "StatusOk", "#228B22");
-            SetBrush(resources, "StatusPartial", "#FF8C00");
-            SetBrush(resources, "StatusOutage", "#B22222");
-            SetBrush(resources, "StatusMaintenance", "#0284C8");
-            SetBrush(resources, "StatusOkSurface", "#ECFDF5");
-            SetBrush(resources, "StatusOkBorder", "#86EFAC");
-            SetBrush(resources, "StatusPartialSurface", "#FFF7ED");
-            SetBrush(resources, "StatusPartialBorder", "#FDBA74");
+            SetBrush(resources, "StatusOk", "#16A34A");
+            SetBrush(resources, "StatusPartial", "#D97706");
+            SetBrush(resources, "StatusOutage", "#DC2626");
+            SetBrush(resources, "StatusMaintenance", "#0284C7");
+            SetBrush(resources, "StatusOkSurface", "#F0FDF4");
+            SetBrush(resources, "StatusOkBorder", "#BBF7D0");
+            SetBrush(resources, "StatusPartialSurface", "#FFFBEB");
+            SetBrush(resources, "StatusPartialBorder", "#FDE68A");
             SetBrush(resources, "StatusOutageSurface", "#FEF2F2");
             SetBrush(resources, "StatusOutageBorder", "#FECACA");
             SetBrush(resources, "StatusMaintenanceSurface", "#F0F9FF");
-            SetBrush(resources, "StatusMaintenanceBorder", "#7DD3FC");
+            SetBrush(resources, "StatusMaintenanceBorder", "#BAE6FD");
             SetBrush(resources, "StatusEmpty", "#CBD5E1");
             SetBrush(resources, "AppIconCircleBackground", "#DBEAFE");
             SetBrush(resources, "AppIconForeground", "#1D4ED8");

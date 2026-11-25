@@ -26,20 +26,20 @@
         <SolidColorBrush x:Key="ScrollBarThumbPressedBackground" Color="#64748B"/>
 
         <!-- Status / Ampel (ThemeService updates for light+dark; align with heatmap) -->
-        <SolidColorBrush x:Key="StatusOk" Color="#228B22"/>
-        <SolidColorBrush x:Key="StatusPartial" Color="#FF8C00"/>
-        <SolidColorBrush x:Key="StatusOutage" Color="#B22222"/>
-        <SolidColorBrush x:Key="StatusMaintenance" Color="#0284C8"/>
+        <SolidColorBrush x:Key="StatusOk" Color="#16A34A"/>
+        <SolidColorBrush x:Key="StatusPartial" Color="#D97706"/>
+        <SolidColorBrush x:Key="StatusOutage" Color="#DC2626"/>
+        <SolidColorBrush x:Key="StatusMaintenance" Color="#0284C7"/>
 
         <!-- Hero status card surfaces (ThemeService updates for light+dark) -->
-        <SolidColorBrush x:Key="StatusOkSurface" Color="#ECFDF5"/>
-        <SolidColorBrush x:Key="StatusOkBorder" Color="#86EFAC"/>
-        <SolidColorBrush x:Key="StatusPartialSurface" Color="#FFF7ED"/>
-        <SolidColorBrush x:Key="StatusPartialBorder" Color="#FDBA74"/>
+        <SolidColorBrush x:Key="StatusOkSurface" Color="#F0FDF4"/>
+        <SolidColorBrush x:Key="StatusOkBorder" Color="#BBF7D0"/>
+        <SolidColorBrush x:Key="StatusPartialSurface" Color="#FFFBEB"/>
+        <SolidColorBrush x:Key="StatusPartialBorder" Color="#FDE68A"/>
         <SolidColorBrush x:Key="StatusOutageSurface" Color="#FEF2F2"/>
         <SolidColorBrush x:Key="StatusOutageBorder" Color="#FECACA"/>
         <SolidColorBrush x:Key="StatusMaintenanceSurface" Color="#F0F9FF"/>
-        <SolidColorBrush x:Key="StatusMaintenanceBorder" Color="#7DD3FC"/>
+        <SolidColorBrush x:Key="StatusMaintenanceBorder" Color="#BAE6FD"/>
         <SolidColorBrush x:Key="StatusEmpty" Color="#CBD5E1"/>
         <SolidColorBrush x:Key="AppIconCircleBackground" Color="#DBEAFE"/>
         <SolidColorBrush x:Key="AppIconForeground" Color="#1D4ED8"/>
