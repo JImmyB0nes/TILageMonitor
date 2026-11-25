@@ -244,6 +244,7 @@ public sealed class ConnectorClient : IDisposable
         if (last is not null && ConnectorProtocol.IsSyntaxError(last) && !string.IsNullOrWhiteSpace(_settings.UserId))
         {
             var saved = _settings.UserId;
+            var keepOmitted = false;
             _settings.UserId = "";
             try
             {
@@ -251,7 +252,9 @@ public sealed class ConnectorClient : IDisposable
                     ConnectorProtocol.Envelope(build(candidates[0])), timeout, ct);
                 _log?.Invoke($"  Gelungen ohne Benutzer-ID \u201E{saved}\u201C – die akzeptiert dieser Konnektor nicht");
                 ConnectorCapabilities.SetOmitUserId(ConnectorCapabilities.OmitKey(_settings.Host, saved), true);
-                _settings.UserId = "";
+                // Fuer den Rest dieses Durchlaufs ohne ID weiter – sonst scheitert jeder weitere
+                // Aufruf erst mit 4000, bevor er ueber denselben Umweg doch gelingt.
+                keepOmitted = true;
                 _okByService[serviceName] = _okByService.TryGetValue(serviceName, out var done) ? done + 1 : 1;
                 return answer;
             }
@@ -261,7 +264,8 @@ public sealed class ConnectorClient : IDisposable
             }
             finally
             {
-                _settings.UserId = saved;
+                if (!keepOmitted)
+                    _settings.UserId = saved;
             }
         }
 

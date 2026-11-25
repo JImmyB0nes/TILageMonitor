@@ -89,8 +89,14 @@ public static class ConnectorHistoryStore
 
     public static ConnectorHistoryFile Load()
     {
-        TryLoad(out var file);
-        return file;
+        // Unter derselben Sperre wie das Schreiben: das Fenster liest auf dem UI-Thread,
+        // waehrend der Hintergrund gerade die Datei ersetzt – ohne Sperre stand dann
+        // kurzzeitig "noch kein Verlauf" in der Ansicht.
+        lock (Gate)
+        {
+            TryLoad(out var file);
+            return file;
+        }
     }
 
     /// <summary>

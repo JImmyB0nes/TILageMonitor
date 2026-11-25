@@ -89,7 +89,10 @@ public partial class ConnectorWindow : Window
             // Instanzvergleich haette den aelteren Stand ueber die frischeren Angaben des
             // Nutzers gezeichnet, die gerade erst per 'Test' oder 'Aktualisieren' geholt wurden.
             if (latest is not null && latest.RetrievedAt > (_snapshot?.RetrievedAt ?? DateTime.MinValue))
+            {
+                CarryOverCardDetails(_snapshot, latest);
                 Render(latest);
+            }
             else if (_snapshot is not null)
                 RenderPresence();
         }
@@ -101,6 +104,30 @@ public partial class ConnectorWindow : Window
     }
 
     private static string L(string de, string en) => LocalizationService.Pick(de, en);
+
+    /// <summary>
+    /// Der Hintergrund liest keine Kartenzertifikate (nur C.QES selten nach). Ohne Uebernahme
+    /// verschwanden nach dem naechsten Poll die per „Alle Zertifikate lesen“ geholten
+    /// Zertifikate samt OCSP-Knopf wieder. Uebernommen wird nur fuer dieselbe Karte
+    /// (gleicher Kartengriff bzw. gleiche ICCSN) und nur, was der neue Stand nicht selbst hat.
+    /// </summary>
+    internal static void CarryOverCardDetails(ConnectorSnapshot? previous, ConnectorSnapshot latest)
+    {
+        if (previous is null || ReferenceEquals(previous, latest))
+            return;
+        foreach (var card in latest.Cards)
+        {
+            var old = previous.Cards.FirstOrDefault(c =>
+                (!string.IsNullOrEmpty(card.CardHandle) && c.CardHandle == card.CardHandle)
+                || (!string.IsNullOrEmpty(card.Iccsn) && string.Equals(c.Iccsn, card.Iccsn, StringComparison.OrdinalIgnoreCase)));
+            if (old is null)
+                continue;
+            card.AuthCertificate ??= old.AuthCertificate;
+            foreach (var cert in old.Certificates)
+                if (!card.Certificates.Any(c => c.RefEquals(cert.CertRef)))
+                    card.Certificates.Add(cert);
+        }
+    }
 
     /// <summary>
     /// Haelt die Anwesenheitsangabe frisch. Ohne diesen Tick steht "vor 12 s" auch noch nach
@@ -221,9 +248,9 @@ public partial class ConnectorWindow : Window
         current.MonitoringEnabled = MonitoringToggle.IsChecked == true;
         current.EventSubscriptionsEnabled = EventSubscriptionsToggle.IsChecked == true;
         current.HistoryEnabled = HistoryToggle.IsChecked == true;
-        if (int.TryParse(PollMinutesBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var poll))
+        if (int.TryParse(PollMinutesBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var poll))
             current.PollMinutes = Math.Clamp(poll, 1, 120);
-        if (int.TryParse(CertWarnDaysBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days))
+        if (int.TryParse(CertWarnDaysBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var days))
             current.CertificateWarningDays = Math.Clamp(days, 1, 365);
 
         if (CertPasswordBox.Password.Length > 0)
@@ -263,6 +290,10 @@ public partial class ConnectorWindow : Window
         if (contextProblems is not null)
             return L("Die IDs im Aufrufkontext lehnt der Konnektor höchstwahrscheinlich ab:\n\n" + contextProblems,
                      "The connector most likely rejects these call-context IDs:\n\n" + contextProblems);
+        if (!int.TryParse(PollMinutesBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var poll) || poll is < 1 or > 120)
+            return L("Das Intervall muss eine ganze Zahl zwischen 1 und 120 Minuten sein.", "The interval must be a whole number between 1 and 120 minutes.");
+        if (!int.TryParse(CertWarnDaysBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var warnDays) || warnDays is < 1 or > 365)
+            return L("„Warnung ab“ muss eine ganze Zahl zwischen 1 und 365 Tagen sein.", "“Warn from” must be a whole number between 1 and 365 days.");
         if (!string.IsNullOrWhiteSpace(s.ClientCertificatePath) && !File.Exists(s.ClientCertificatePath))
             return L($"Die Zertifikatsdatei wurde nicht gefunden:\n{s.ClientCertificatePath}", $"Certificate file not found:\n{s.ClientCertificatePath}");
         return null;
@@ -2610,9 +2641,9 @@ public partial class ConnectorWindow : Window
     {
         var head = message.Split('\n')[0].Trim();
         var extra = message.Length > head.Length
-            ? L("\n\nAlle Einzelheiten inklusive des gesendeten Requests stehen im Reiter „Protokoll“ " +
+            ? L("\n\nAlle Einzelheiten inklusive des gesendeten Requests stehen im Bereich „Diagnose“ " +
               "und im Diagnosebericht, den Sie mit „Bericht“ in die Zwischenablage kopieren.",
-              "\n\nEverything else, including the request that was sent, is in the \u201CProtocol\u201D tab and " +
+              "\n\nEverything else, including the request that was sent, is in the \u201CDiagnostics\u201D section and " +
               "in the diagnostic report you can copy with \u201CReport\u201D.")
             : "";
         System.Windows.MessageBox.Show(this, head + extra, L("Konnektor", "Connector"), MessageBoxButton.OK, MessageBoxImage.Warning);
