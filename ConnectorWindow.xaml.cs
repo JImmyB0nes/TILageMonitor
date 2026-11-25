@@ -89,12 +89,22 @@ public partial class ConnectorWindow : Window
 
     private void OnHomeAssistantUpdated() => Dispatcher.BeginInvoke(RenderHomeAssistantStatus);
 
+    private void HaEnabled_Changed(object sender, RoutedEventArgs e) => RenderHomeAssistantStatus();
+
     private void RenderHomeAssistantStatus()
     {
+        if (HaStatusText is null)
+            return;
         var enabled = HaEnabledToggle.IsChecked == true;
         string key;
         string text;
-        if (HomeAssistantPublisher.LastError is { } error)
+        if (!enabled)
+        {
+            key = "StatusEmpty";
+            text = L("Aus. Einschalten, Zugang eintragen und „Speichern & verbinden“ wählen.",
+                "Off. Switch on, enter the access data and choose \u201CSave & connect\u201D.");
+        }
+        else if (HomeAssistantPublisher.LastError is { } error)
         {
             key = "StatusOutage";
             text = error;
@@ -108,10 +118,7 @@ public partial class ConnectorWindow : Window
         else
         {
             key = "StatusEmpty";
-            text = enabled
-                ? L("Wird beim nächsten Abruf gesendet.", "Will be sent with the next poll.")
-                : L("Aus. Einschalten, Adresse und Token eintragen, dann „Speichern & verbinden“.",
-                    "Off. Switch on, enter address and token, then save.");
+            text = L("Wird nach dem Speichern mit dem nächsten Abruf gesendet.", "Will be sent with the next poll after saving.");
         }
         HaStatusDot.Fill = Brush(key);
         HaStatusText.Text = text;
@@ -418,14 +425,6 @@ public partial class ConnectorWindow : Window
         current.HomeAssistantEnabled = HaEnabledToggle.IsChecked == true;
         current.HomeAssistantUrl = HaUrlBox.Text.Trim();
         current.HomeAssistantName = HaNameBox.Text.Trim();
-        // Ohne eingetragenen Namen den jetzt abgeleiteten festschreiben. Sonst wuerde aus dem
-        // SMC-B-Inhaber beim Ziehen der Karte die IP – und Home Assistant saehe ein neues Geraet.
-        if (current.HomeAssistantEnabled && current.HomeAssistantName.Length == 0)
-        {
-            var derived = ConnectorMonitor.HomeAssistantName(current, _snapshot ?? _ownerMain.ConnectorMonitor.LastSnapshot);
-            current.HomeAssistantName = derived;
-            HaNameBox.Text = derived;
-        }
         if (HaTokenBox.Password.Length > 0)
             current.HomeAssistantTokenProtected = SecretProtector.Protect(HaTokenBox.Password.Trim());
         current.HomeAssistantTransport = HaMqttRadio.IsChecked == true ? "mqtt" : "rest";
@@ -447,6 +446,37 @@ public partial class ConnectorWindow : Window
             current.PinnedServerThumbprint = null;
 
         return current;
+    }
+
+    /// <summary>Home Assistant eingeschaltet, aber unvollstaendig? Nur beim Speichern geprueft.</summary>
+    private string? ValidateHomeAssistant(ConnectorSettings s)
+    {
+        if (s.HomeAssistantEnabled)
+        {
+            if (s.HomeAssistantUsesMqtt)
+            {
+                if (string.IsNullOrWhiteSpace(s.MqttHost))
+                    return L("Home Assistant (MQTT): bitte den MQTT-Broker eintragen.", "Home Assistant (MQTT): please enter the MQTT broker.");
+                if (!int.TryParse(MqttPortBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mqttPort) || mqttPort is < 1 or > 65535)
+                    return L("Home Assistant (MQTT): der Port muss zwischen 1 und 65535 liegen.", "Home Assistant (MQTT): the port must be between 1 and 65535.");
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(s.HomeAssistantUrl))
+                    return L("Home Assistant: bitte die Adresse eintragen.", "Home Assistant: please enter the address.");
+                try
+                {
+                    HomeAssistantPublisher.BuildStateUri(s.HomeAssistantUrl, "sensor.x");
+                }
+                catch (ArgumentException ex)
+                {
+                    return ex.Message;
+                }
+                if (string.IsNullOrEmpty(s.HomeAssistantTokenProtected))
+                    return L("Home Assistant: bitte das Long-Lived Access Token eintragen.", "Home Assistant: please enter the long-lived access token.");
+            }
+        }
+        return null;
     }
 
     private string? Validate(ConnectorSettings s)
@@ -559,7 +589,7 @@ public partial class ConnectorWindow : Window
     private async void SaveConnect_Click(object sender, RoutedEventArgs e)
     {
         var s = ReadForm();
-        var error = Validate(s);
+        var error = Validate(s) ?? ValidateHomeAssistant(s);
         if (error is not null)
         {
             ShowWarning(error);
@@ -568,6 +598,13 @@ public partial class ConnectorWindow : Window
         if (!ConfirmCleartextBasicAuth(s))
             return;
         NoteContextWarnings(s);
+        // Ohne eingetragenen Namen den jetzt abgeleiteten festschreiben. Sonst wuerde aus dem
+        // SMC-B-Inhaber beim Ziehen der Karte die IP – und Home Assistant saehe ein neues Geraet.
+        if (s.HomeAssistantEnabled && s.HomeAssistantName.Length == 0)
+        {
+            s.HomeAssistantName = ConnectorMonitor.HomeAssistantName(s, _snapshot ?? _ownerMain.ConnectorMonitor.LastSnapshot);
+            HaNameBox.Text = s.HomeAssistantName;
+        }
         Persist(s);
         UpdateClientCertInfo(s);
         if (await LoadSnapshotAsync(s, interactive: true))

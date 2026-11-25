@@ -1169,6 +1169,7 @@
                                     <StackPanel>
                                         <DockPanel Margin="0,0,0,16">
                                             <CheckBox x:Name="HaEnabledToggle" DockPanel.Dock="Right" Style="{StaticResource SwitchStyle}"
+                                                      Checked="HaEnabled_Changed" Unchecked="HaEnabled_Changed"
                                                       VerticalAlignment="Center"
                                                       AutomationProperties.Name="An Home Assistant senden"/>
                                             <Border Style="{StaticResource IconTileStyle}">
