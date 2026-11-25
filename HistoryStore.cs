@@ -815,11 +815,11 @@ public sealed class HistoryDayCell
         var dark = ThemeService.IsDark;
         return status switch
         {
-            "full" => dark ? "#F87171" : "#B22222",
-            "partial" => dark ? "#FBBF24" : "#FF8C00",
+            "full" => dark ? "#F87171" : "#DC2626",
+            "partial" => dark ? "#FBBF24" : "#D97706",
             // Distinct from partial (orange): blue for Wartung
-            "maintenance" => dark ? "#38BDF8" : "#0284C8",
-            "none" => dark ? "#34D399" : "#228B22",
+            "maintenance" => dark ? "#38BDF8" : "#0284C7",
+            "none" => dark ? "#34D399" : "#16A34A",
             _ => dark ? "#64748B" : "#CBD5E1"
         };
     }

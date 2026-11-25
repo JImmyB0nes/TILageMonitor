@@ -146,6 +146,40 @@ public static class ConnectorHistoryTimeline
         return result;
     }
 
+    /// <summary>
+    /// Die letzten <paramref name="count"/> Stunden bis einschliesslich der Stunde von
+    /// <paramref name="now"/>, aeltest zuerst – fuer die 24-Stunden-Leiste der Uebersicht.
+    /// </summary>
+    public static Dictionary<ConnectorHistoryLane, ConnectorHistoryCell[]> LastHours(ConnectorHistoryFile file, DateTime now, int count = 24)
+    {
+        var byDayHour = new Dictionary<(DateTime Day, int Hour), ConnectorHourSnapshot>();
+        foreach (var hour in file.Hours ?? [])
+        {
+            if (!TryParseHourKey(hour.HourKey, out var stamp))
+                continue;
+            var key = (stamp.Date, stamp.Hour);
+            byDayHour[key] = byDayHour.TryGetValue(key, out var existing) ? Merge(existing, hour) : hour;
+        }
+
+        var result = Lanes.ToDictionary(l => l, _ => new ConnectorHistoryCell[count]);
+        var current = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
+        for (var i = 0; i < count; i++)
+        {
+            var at = current.AddHours(i - count + 1);
+            byDayHour.TryGetValue((at.Date, at.Hour), out var snapshot);
+            foreach (var lane in Lanes)
+                result[lane][i] = Evaluate(snapshot, lane);
+        }
+        return result;
+    }
+
+    /// <summary>Anteil erreichbarer Abrufe ueber die gegebenen Stunden in Prozent, null ohne Daten.</summary>
+    public static double? Availability(IEnumerable<ConnectorHistoryCell> hours)
+    {
+        var known = hours.Where(h => h.Percent is not null).ToList();
+        return known.Count == 0 ? null : known.Average(h => h.Percent!.Value);
+    }
+
     /// <summary>Tageswert aus 24 Stunden: alle gut = Ok, alle schlecht = Down, sonst Partial.</summary>
     public static ConnectorHistoryCell Summarize(IEnumerable<ConnectorHistoryCell> hours)
     {

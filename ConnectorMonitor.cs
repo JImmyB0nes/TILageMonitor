@@ -172,6 +172,7 @@ public sealed class ConnectorMonitor : IDisposable
             // noch auf "Karte rein" steht – dieselbe Begruendung, die fuer LastSnapshot gilt.
             LastPresence = null;
             LastEvent = null;
+            _ = HomeAssistantMqtt.StopAsync(); // Home Assistant: "nicht verfuegbar" statt alter Werte
             Updated?.Invoke();
             return;
         }
@@ -184,7 +185,13 @@ public sealed class ConnectorMonitor : IDisposable
         _loop = Task.Run(() => LoopAsync(token), token);
     }
 
-    public void Stop() => StopCore(keepAlertState: false);
+    public void Stop()
+    {
+        StopCore(keepAlertState: false);
+        // Ohne Ueberwachung kommen keine Daten mehr – Home Assistant soll das als
+        // "nicht verfuegbar" sehen statt alter Werte mit "online".
+        _ = HomeAssistantMqtt.StopAsync();
+    }
 
     private void StopCore(bool keepAlertState)
     {
@@ -407,8 +414,11 @@ public sealed class ConnectorMonitor : IDisposable
     private void PublishToHomeAssistant(CancellationToken ct)
     {
         var settings = _settingsProvider().Connector;
-        if (!settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.HomeAssistantUrl))
+        if (!settings.HomeAssistantEnabled)
+        {
+            _ = HomeAssistantMqtt.StopAsync();
             return;
+        }
         var ok = LastError is null && LastSnapshot is not null;
         var input = new HomeAssistantInput(
             HomeAssistantName(settings, LastSnapshot),
@@ -419,9 +429,17 @@ public sealed class ConnectorMonitor : IDisposable
             ClientCertificateNotAfter,
             LiveEvents: settings.EventSubscriptionsEnabled ? SubscriptionsAlive && EventStreamActive : null,
             LastError,
-            DateTime.Now);
+            DateTime.Now)
+        {
+            Machine = Environment.MachineName,
+            AppVersion = AppVersionText,
+            LastKnownSnapshot = LastSnapshot
+        };
         _ = Task.Run(() => HomeAssistantPublisher.PublishAsync(settings, input, ct), CancellationToken.None);
     }
+
+    private static readonly string AppVersionText =
+        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "";
 
     /// <summary>Anzeigename in Home Assistant: eingetragen, sonst SMC-B-Inhaber, sonst Adresse.</summary>
     public static string HomeAssistantName(ConnectorSettings settings, ConnectorSnapshot? snapshot)

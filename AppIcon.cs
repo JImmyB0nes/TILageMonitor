@@ -58,9 +58,20 @@ public sealed class AppIcon : Shape
     {
         get
         {
-            if (!Paths.TryGetValue(Glyph ?? "", out var data))
+            var glyph = Glyph ?? "";
+            if (!Paths.TryGetValue(glyph, out var data))
                 return Geometry.Empty;
-            var geometry = Geometry.Parse(data).Clone();
+            Geometry parsed;
+            lock (Parsed)
+            {
+                if (!Parsed.TryGetValue(glyph, out parsed!))
+                {
+                    parsed = Geometry.Parse(data);
+                    parsed.Freeze();
+                    Parsed[glyph] = parsed;
+                }
+            }
+            var geometry = parsed.Clone();
             var scale = Size / 24.0;
             geometry.Transform = new ScaleTransform(scale, scale);
             return geometry;
@@ -159,6 +170,9 @@ public sealed class AppIcon : Shape
     private const string Chevron = "M6,9 L12,15 L18,9";
     private const string Pen =
         "M17,3 A2.85,2.85 0 1 1 21,7 L7.5,20.5 L2,22 L3.5,16.5 Z";
+
+    /// <summary>Einmal geparste, eingefrorene Pfade – das Zeichnen klont nur noch.</summary>
+    private static readonly Dictionary<string, Geometry> Parsed = new(StringComparer.Ordinal);
 
     private static readonly Dictionary<string, string> Paths = new()
     {

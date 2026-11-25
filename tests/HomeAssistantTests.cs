@@ -78,6 +78,37 @@ public class HomeAssistantTests
     }
 
     [Fact]
+    public void Failed_card_query_reports_unknown_instead_of_card_removed()
+    {
+        var snapshot = Snapshot();
+        snapshot.Cards.Clear();
+        snapshot.Warnings.Add("Karten (GetCards): Zeitüberschreitung");
+        var states = HomeAssistantStates.Build(Input(snapshot: snapshot)).ToDictionary(e => e.EntityId);
+
+        Assert.Equal("unknown", states["binary_sensor.tilage_praxis_dr_mueller_smcb_gesteckt"].State);
+        Assert.Equal("unknown", states["sensor.tilage_praxis_dr_mueller_karten"].State);
+    }
+
+    [Fact]
+    public void Rejected_query_is_not_reported_as_ok()
+    {
+        var input = new HomeAssistantInput("Praxis", true, null, [], null, null, null, "4204 – Clientsystem nicht authentifiziert", Now);
+        var status = HomeAssistantStates.Build(input).Single(e => e.Key == "status");
+
+        Assert.Equal("abfrage_abgelehnt", status.State);
+    }
+
+    [Fact]
+    public void Expiry_sensors_survive_an_outage_from_last_known_data()
+    {
+        var withLast = new HomeAssistantInput("Praxis Dr. Müller", false, null, [], null, null, null, "weg", Now) { LastKnownSnapshot = Snapshot() };
+        var expiry = HomeAssistantStates.Build(withLast).Where(e => e.Key.EndsWith("_ablauf", StringComparison.Ordinal)).ToList();
+
+        Assert.Equal(3, expiry.Count);
+        Assert.Equal("off", HomeAssistantStates.Build(withLast).Single(e => e.Key == "erreichbar").State);
+    }
+
+    [Fact]
     public void Json_contains_state_and_skips_null_attributes()
     {
         var entity = new HomeAssistantEntity("sensor.x", "12", new Dictionary<string, object?> { ["unit_of_measurement"] = "d", ["iccsn"] = null });
@@ -93,5 +124,116 @@ public class HomeAssistantTests
     {
         Assert.Equal("http://ha.local:8123/api/states/sensor.x", HomeAssistantPublisher.BuildStateUri("ha.local:8123", "sensor.x").ToString());
         Assert.Equal("https://abc.ui.nabu.casa/api/states/sensor.x", HomeAssistantPublisher.BuildStateUri("https://abc.ui.nabu.casa/api/", "sensor.x").ToString());
+    }
+}
+
+/// <summary>MQTT-Discovery: Geraet je Praxis, feste unique_id, "None" fuer unbekannt.</summary>
+public class HomeAssistantMqttTests
+{
+    private static readonly DateTime Now = new(2026, 11, 25, 10, 0, 0);
+
+    private static HomeAssistantInput Input(bool reachable = true) =>
+        new("Praxis Dr. Müller", reachable, reachable ? new ConnectorSnapshot
+        {
+            RetrievedAt = Now,
+            Resource = new ConnectorResourceInfo { VpnTiStatus = "Online", VpnSisStatus = "Offline" },
+            Cards = { new ConnectorCard { CardType = "SMC-B", Iccsn = "80276002711611083818", CardHolderName = "Praxis", CtId = "CT1", CertificateExpirationDate = Now.AddDays(100) } }
+        } : null, [], null, null, true, null, Now) { Machine = "PRAXIS-PC", AppVersion = "3.3.0" };
+
+    [Fact]
+    public void Discovery_groups_entities_under_one_device_per_practice()
+    {
+        var entity = HomeAssistantStates.Build(Input()).Single(e => e.Key == "vpn_ti");
+        var directory = new ConnectorServiceDirectory { ProductVendorName = "RISE", ProductName = "Konnektor", FirmwareVersion = "5.1.2" };
+        var message = HomeAssistantMqtt.Build(entity, "praxis_dr_mueller", "Praxis Dr. Müller", directory, 900);
+
+        Assert.Equal("homeassistant/binary_sensor/tilage_praxis_dr_mueller_vpn_ti/config", message.ConfigTopic);
+        Assert.Equal("tilage/praxis_dr_mueller/vpn_ti/state", message.StateTopic);
+        Assert.Equal("on", message.StatePayload);
+        var config = System.Text.Json.Nodes.JsonNode.Parse(message.ConfigJson)!;
+        Assert.Equal("VPN TI", (string?)config["name"]);
+        Assert.Equal("tilage_praxis_dr_mueller_vpn_ti", (string?)config["unique_id"]);
+        Assert.Equal("connectivity", (string?)config["device_class"]);
+        Assert.Equal("tilage/praxis_dr_mueller/availability", (string?)config["availability_topic"]);
+        Assert.Equal("tilage_praxis_dr_mueller", (string?)config["device"]!["identifiers"]![0]);
+        Assert.Equal("5.1.2", (string?)config["device"]!["sw_version"]);
+    }
+
+    [Fact]
+    public void Unknown_state_becomes_none_and_units_move_into_config()
+    {
+        var entities = HomeAssistantStates.Build(Input(reachable: false));
+        var vpn = HomeAssistantMqtt.Build(entities.Single(e => e.Key == "vpn_ti"), "x", "X", null, 900);
+        Assert.Equal("None", vpn.StatePayload);
+
+        var expiry = HomeAssistantMqtt.Build(HomeAssistantStates.Build(Input()).Single(e => e.Key.EndsWith("_ablauf", StringComparison.Ordinal) && e.Key.StartsWith("smcb", StringComparison.Ordinal)), "x", "X", null, 900);
+        var config = System.Text.Json.Nodes.JsonNode.Parse(expiry.ConfigJson)!;
+        Assert.Equal("d", (string?)config["unit_of_measurement"]);
+        Assert.DoesNotContain("unit_of_measurement", expiry.AttributesJson);
+        Assert.Contains("gueltig_bis", expiry.AttributesJson);
+    }
+
+    [Fact]
+    public void Heartbeat_carries_machine_and_never_expires()
+    {
+        var heartbeat = HomeAssistantStates.Build(Input(reachable: false)).Single(e => e.Key == "app_lebenszeichen");
+        Assert.Equal("PRAXIS-PC", heartbeat.Attributes["rechner"]);
+        var message = HomeAssistantMqtt.Build(heartbeat, "x", "X", null, 900);
+        Assert.DoesNotContain("expire_after", message.ConfigJson);
+    }
+
+    [Fact]
+    public void Subscribe_and_publish_packets_round_trip()
+    {
+        var subscribe = MqttConnection.BuildSubscribe(7, ["tilage/x/availability"]);
+        Assert.Equal(0x82, subscribe[0]);
+        Assert.Equal(7, (subscribe[2] << 8) | subscribe[3]);
+
+        var publish = MqttConnection.BuildPublish("tilage/x/vpn_ti/state", System.Text.Encoding.UTF8.GetBytes("on"), retain: true);
+        Assert.Equal(0x31, publish[0]);
+        Assert.True(MqttConnection.TryParsePublish(publish[2..], out var topic, out var payload));
+        Assert.Equal("tilage/x/vpn_ti/state", topic);
+        Assert.Equal("on", payload);
+    }
+
+    [Fact]
+    public void Only_card_entities_are_cleaned_up()
+    {
+        Assert.True(HomeAssistantMqtt.IsCardKey("hba_890123_ablauf"));
+        Assert.True(HomeAssistantMqtt.IsCardKey("smcb_pin"));
+        Assert.False(HomeAssistantMqtt.IsCardKey("clientsystem_ablauf"));
+        Assert.False(HomeAssistantMqtt.IsCardKey("vpn_ti"));
+    }
+
+    [Fact]
+    public void Connect_packet_carries_will_and_credentials()
+    {
+        var packet = MqttConnection.BuildConnect(new MqttOptions("h", 1883, false, "user", "pw", "client", "tilage/x/availability", "offline", TimeSpan.FromSeconds(60)));
+        Assert.Equal(0x10, packet[0]);
+        // Flags: Username, Passwort, Will-Retain, Will, Clean Session
+        Assert.Equal(0x80 | 0x40 | 0x20 | 0x04 | 0x02, packet[9]);
+        Assert.Equal(60, (packet[10] << 8) | packet[11]);
+    }
+}
+
+public class ConnectorLastHoursTests
+{
+    [Fact]
+    public void Last_hours_end_with_current_hour_and_mark_gaps()
+    {
+        var now = new DateTime(2026, 11, 25, 10, 30, 0);
+        var file = new ConnectorHistoryFile();
+        ConnectorHistoryStore.ApplyUnreachable(file, now);
+        ConnectorHistoryStore.ApplyUnreachable(file, now.AddHours(-2));
+        file.Hours.Single(h => h.HourKey.Contains("-08", StringComparison.Ordinal)).Polls = 3;
+
+        var hours = ConnectorHistoryTimeline.LastHours(file, now);
+        var reach = hours[ConnectorHistoryLane.Reachable];
+
+        Assert.Equal(24, reach.Length);
+        Assert.Equal(ConnectorHistoryState.Down, reach[23].State);
+        Assert.Equal(ConnectorHistoryState.NoData, reach[22].State);
+        Assert.Equal(ConnectorHistoryState.Partial, reach[21].State);
+        Assert.Equal(37.5, ConnectorHistoryTimeline.Availability(reach));
     }
 }
