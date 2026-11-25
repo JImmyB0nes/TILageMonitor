@@ -44,6 +44,11 @@
 |:---:|:---:|
 | ![Hauptfenster Hellmodus](docs/assets/screenshot-light.png) | ![Hauptfenster Dunkelmodus](docs/assets/screenshot-dark.png) |
 
+<p align="center">
+  <a href="#konnektor-anbindung"><img src="docs/assets/konnektor-uebersicht-dark.png" alt="Konnektor-Fenster – Übersicht (Vorschau mit Demodaten)" width="820"></a><br>
+  <sub>Konnektor-Fenster – Vorschau mit Demodaten</sub>
+</p>
+
 TI-Lage Monitor zeigt den aktuellen Status von **sieben TI-Diensten** als Tray-Ampel und im Fluent-Hauptfenster — inklusive Meldungen, Toasts und einem **14-Tage-Verlauf**. Optional kommt die **lokale Konnektor-Anbindung** hinzu (SDS, VPN TI/SIS, Karten, Terminals, PIN-Status, Live-Ereignisse). Alles läuft **lokal** auf Windows, ohne Login und ohne Cloud.
 
 **X** oder Minimieren legt die App in den Tray (Monitoring läuft weiter). Nur **Beenden** beendet sie.
@@ -135,6 +140,29 @@ Drei Segmente auf derselben Datenbasis: **Übersicht | Stunden | Ereignisse**.
 Optional liest die App den **lokalen TI-Konnektor** über die SOAP-Schnittstellen nach [gemSpec_Kon](https://fachportal.gematik.de/) / api-telematik OPB5 aus. Das gilt für Konnektoren dieses Vertragsstands — typischerweise **RISE**, **secunet** und **KoCoBox**. Die Einrichtung liegt unter **Konnektor** im Hauptfenster, im Tray-Menü oder über **Einstellungen**.
 
 Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf, Ereignisse). PIN-Aktionen sind standardmäßig ausgeschaltet (Einstellungen → „PIN-Verwaltung erlauben“) und starten auch dann nur, wenn man sie ausdrücklich im Konnektor-Fenster anstößt; PIN und PUK werden **ausschließlich am Kartenterminal** eingegeben und die App sieht sie nie. Ein automatisches Auslesen der eGK-Versichertendaten (`ReadVSD`) findet nicht statt.
+
+### So sieht es aus
+
+> Vorschaubilder mit **Demodaten** (Praxis, Personen, Kartennummern und Telematik-IDs sind erfunden). Aufbau, Farben und Texte entsprechen dem Konnektor-Fenster ab Version 3.2.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/konnektor-uebersicht-light.png" alt="Übersicht im Hellmodus"></td>
+    <td width="50%"><img src="docs/assets/konnektor-karten.png" alt="Karten mit Detailansicht und PIN-Zustand"></td>
+  </tr>
+  <tr>
+    <td><b>Übersicht</b><br><sub>Zustand des Konnektors, Kennzahlen (Erreichbarkeit, VPN TI/SIS, Live-Ereignisse), gesteckte Karte und Eckdaten aus <code>connector.sds</code> – inklusive Uhrzeit-Abweichung.</sub></td>
+    <td><b>Karten</b><br><sub>SMC-B, HBA und eGK mit Zustandspunkt und Zertifikatsbalken; Detailansicht mit Eigenschaften, Zertifikaten, PIN-Tabelle und Aktionen wie OCSP-Prüfung und QES-Probesignatur.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/konnektor-zertifikate.png" alt="Zertifikate mit Resttagen und Ablaufkalender"></td>
+    <td><img src="docs/assets/konnektor-verbindung.png" alt="Verbindungseinstellungen"></td>
+  </tr>
+  <tr>
+    <td><b>Zertifikate</b><br><sub>Resttage je Zertifikat mit Warnstufen 90/30/7 Tage; der <b>Ablaufkalender (.ics)</b> bringt alle Termine mit Erinnerungen nach Outlook.</sub></td>
+    <td><b>Verbindung</b><br><sub>Adresse, Client-Zertifikat (P12) und Aufrufkontext; Schalter für Überwachung, Ereignis-Abos und lokalen Verlauf.</sub></td>
+  </tr>
+</table>
 
 ### Was ausgelesen wird
 
