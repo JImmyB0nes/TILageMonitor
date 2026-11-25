@@ -39,6 +39,9 @@ public sealed class ConnectorClient : IDisposable
     private readonly Dictionary<string, int> _okByService = new(StringComparer.OrdinalIgnoreCase);
 
     public string? LastServerThumbprint { get; private set; }
+
+    /// <summary>Zuletzt gemessene Abweichung der Konnektor-Uhr (HTTP-Date-Header), siehe <see cref="ConnectorClock"/>.</summary>
+    public TimeSpan? ClockOffset { get; private set; }
     public string? LastServerSubject { get; private set; }
     public DateTime? LastServerNotAfter { get; private set; }
 
@@ -130,9 +133,14 @@ public sealed class ConnectorClient : IDisposable
 
         try
         {
+            var sentUtc = DateTimeOffset.UtcNow;
             var response = await _transport.SendAsync(
                 new ConnectorHttpRequest(method, uri, headers, body, contentType), timeout, ct);
+            var receivedUtc = DateTimeOffset.UtcNow;
             RememberServerCertificate();
+            if (response.Headers.TryGetValue("Date", out var dateHeader)
+                && ConnectorClock.OffsetFromDateHeader(dateHeader, sentUtc, receivedUtc) is { } offset)
+                ClockOffset = offset;
             var text = response.BodyText;
             LastResponseXml = text;
 
@@ -545,6 +553,35 @@ public sealed class ConnectorClient : IDisposable
             ns => ConnectorProtocol.VerifyCertificate(ns, _settings, base64Certificate), "VerifyCertificate", TimeSpan.FromSeconds(60), ct));
 
     /// <summary>
+    /// Probesignatur mit dem HBA (QES): holt eine Jobnummer und signiert einen kurzen Testtext
+    /// per SignDocument. Der Konnektor verlangt dafuer die PIN.QES am Kartenterminal – erst die
+    /// erfolgreiche Antwort zeigt, dass HBA, Zertifikat, PIN und Signaturdienst zusammenspielen.
+    /// </summary>
+    public async Task<ConnectorSignatureResult> QesTestSignatureAsync(string cardHandle, CancellationToken ct)
+    {
+        var directory = await GetServiceDirectoryAsync(ct);
+        if (directory.Find("SignatureService") is null)
+            throw new ConnectorFaultException(LocalizationService.Pick(
+                "Der Konnektor bietet keinen Signaturdienst (SignatureService) an.",
+                "The connector does not offer a signature service (SignatureService)."));
+
+        var job = ConnectorProtocol.ParseJobNumber(await CallAsync("SignatureService", ConnectorProtocol.DefaultSignatureServiceNs,
+            ns => ConnectorProtocol.GetJobNumber(ns, _settings), "GetJobNumber", null, ct));
+        if (string.IsNullOrWhiteSpace(job))
+            throw new ConnectorFaultException(LocalizationService.Pick(
+                "Der Konnektor hat keine Jobnummer für die Signatur geliefert.",
+                "The connector returned no job number for the signature."));
+
+        var text = $"TI-Lage Monitor – QES-Probesignatur {DateTime.Now:yyyy-MM-dd HH:mm:ss}. " +
+                   "Dieses Dokument dient ausschließlich dem Funktionstest und hat keinen rechtlichen Inhalt.";
+        var shortText = LocalizationService.Pick("TI-Lage Monitor Signaturtest", "TI-Lage Monitor signature test");
+        var response = await CallAsync("SignatureService", ConnectorProtocol.DefaultSignatureServiceNs,
+            ns => ConnectorProtocol.SignDocument(ns, _settings, cardHandle, job, Encoding.UTF8.GetBytes(text), shortText),
+            "SignDocument", PinOperationTimeout, ct);
+        return ConnectorProtocol.ParseSignResult(response);
+    }
+
+    /// <summary>
     /// Liest alles Sinnvolle in einem Durchgang. Teilfehler (z. B. ein nicht unterstützter Dienst)
     /// landen in <see cref="ConnectorSnapshot.Warnings"/>, statt den ganzen Abruf abzubrechen.
     /// Nur ein Fehler beim Dienstverzeichnis ist fatal.
@@ -598,6 +635,7 @@ public sealed class ConnectorClient : IDisposable
             }
         }
 
+        snapshot.ClockOffset = ClockOffset;
         snapshot.ServerCertificateThumbprint = LastServerThumbprint;
         snapshot.ServerCertificateSubject = LastServerSubject;
         snapshot.ServerCertificateNotAfter = LastServerNotAfter;

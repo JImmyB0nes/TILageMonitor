@@ -1157,6 +1157,7 @@ public partial class ConnectorWindow : Window
                 : string.Join("\n", active.Select(e => $"{e.Condition} ({e.Severity}, {e.Type}) {L("seit", "since")} {e.ValidFrom?.ToString("g", LocalizationService.DisplayCulture)}")));
         }
 
+        Row(L("Uhrzeit-Abweichung", "Clock offset"), snapshot.ClockOffset is null && snapshot.Directory is null ? null : ConnectorClock.Describe(snapshot.ClockOffset));
         Row(L("TLS-Zertifikat Konnektor", "Connector TLS certificate"), snapshot.ServerCertificateSubject is null ? null
             : $"{snapshot.ServerCertificateSubject}\n{L("gültig bis", "valid until")} {snapshot.ServerCertificateNotAfter:dd.MM.yyyy}");
 
@@ -1707,6 +1708,8 @@ public partial class ConnectorWindow : Window
                 actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card), "\uE9D5"));
             actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card), "\uEB95"));
             actions.Children.Add(ActionButton(L("PIN-Status neu lesen", "Re-read PIN status"), async () => await RefreshPinStatusAsync(card), "\uE72C"));
+            if (card.IsHba)
+                actions.Children.Add(ActionButton(L("QES-Probesignatur", "QES test signature"), async () => await QesProbeAsync(card), "\uE70F"));
             CardDetailPanel.Children.Add(actions);
         }
 
@@ -2237,7 +2240,8 @@ public partial class ConnectorWindow : Window
 
         if (!_ownerMain.GetSettingsSnapshot().Connector.AllowPinManagement)
         {
-            ShowWarning(L("PIN-Verwaltung ist in den Einstellungen deaktiviert.", "PIN management is disabled in settings."));
+            ShowWarning(L("PIN-Verwaltung ist in den Einstellungen deaktiviert. Einschalten unter Einstellungen → Konnektor → „PIN-Verwaltung erlauben“ – alternativ die SMC-B im Primärsystem freischalten.",
+                          "PIN management is disabled in settings. Enable it under Settings → Connector → “Allow PIN management” – or unlock the SMC-B via the practice software."));
             return;
         }
 
@@ -2454,6 +2458,175 @@ public partial class ConnectorWindow : Window
     }
 
     // =================================================================
+    // SMC-B-Erinnerung (Toast), QES-Probesignatur, Kalenderexport
+    // =================================================================
+
+    /// <summary>
+    /// Ziel des Toasts "SMC-B freischalten": Karten-Ansicht mit der SMC-B, auf Wunsch gleich
+    /// die Freischaltung. Wartet, bis das Fenster geladen ist und der erste Abruf steht – sonst
+    /// liefe die PIN-Abfrage gegen einen veralteten Stand oder parallel zum Abruf.
+    /// </summary>
+    public async Task ShowSmcbAsync(string? cardId, bool unlock)
+    {
+        try
+        {
+            if (!IsLoaded)
+            {
+                var loaded = new TaskCompletionSource();
+                void OnLoaded(object? s, RoutedEventArgs e) { Loaded -= OnLoaded; loaded.TrySetResult(); }
+                Loaded += OnLoaded;
+                await loaded.Task;
+            }
+            await Task.Yield();
+            Nav.SelectedItem = NavCards;
+
+            for (var waited = 0; (_busy || _snapshot is null) && waited < 60_000; waited += 250)
+                await Task.Delay(250);
+            if (_snapshot is null || !IsVisible)
+                return;
+
+            var smcbs = _snapshot.Cards.Where(c => c.IsSmcB).ToList();
+            var card = smcbs.FirstOrDefault(c => cardId is not null && string.Equals(ConnectorSmcbReminder.CardId(c), cardId, StringComparison.OrdinalIgnoreCase))
+                       ?? smcbs.FirstOrDefault(c => ConnectorSmcbReminder.Evaluate(new ConnectorSnapshot { Cards = [c] }).State == ConnectorSmcbReminder.State.NotVerified)
+                       ?? smcbs.FirstOrDefault();
+            if (card is null)
+            {
+                ShowWarning(L("Der Konnektor meldet derzeit keine SMC-B.", "The connector currently reports no SMC-B."));
+                return;
+            }
+
+            _selectedCard = card;
+            RenderCards(_snapshot);
+            if (!unlock)
+                return;
+
+            var pinType = card.PinTypes.FirstOrDefault(p => string.Equals(p, "PIN.SMC", StringComparison.OrdinalIgnoreCase)) ?? "PIN.SMC";
+            var state = card.PinStates.FirstOrDefault(p => string.Equals(p.PinType, pinType, StringComparison.OrdinalIgnoreCase));
+            if (state?.IsVerified == true)
+            {
+                System.Windows.MessageBox.Show(this, L($"{card.DisplayName} ist bereits freigeschaltet.", $"{card.DisplayName} is already unlocked."),
+                    L("SMC-B", "SMC-B"), MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            await PinActionAsync(card, pinType, "VerifyPin");
+        }
+        catch (Exception ex)
+        {
+            App.LogUnhandled("ConnectorSmcbReminder", ex);
+            ShowWarning(DescribeException(ex));
+        }
+    }
+
+    /// <summary>
+    /// Probesignatur mit dem HBA. Erzeugt eine echte QES ueber einen Testtext – deshalb vorher
+    /// ausdruecklich bestaetigen lassen. Die PIN.QES wird am Kartenterminal eingegeben.
+    /// </summary>
+    private async Task QesProbeAsync(ConnectorCard card)
+    {
+        card = LiveCard(card);
+        var terminal = _snapshot?.Terminals.FirstOrDefault(t => string.Equals(t.CtId, card.CtId, StringComparison.OrdinalIgnoreCase));
+        var where = terminal is null || string.IsNullOrWhiteSpace(terminal.Name) ? card.CtId : terminal.Name;
+
+        if (System.Windows.MessageBox.Show(this,
+                L($"QES-Probesignatur mit {card.DisplayName}.\n\n" +
+                  "Der Konnektor signiert einen kurzen Testtext qualifiziert (CAdES). Das prüft HBA, Signaturzertifikat, PIN.QES und Signaturdienst in einem Durchgang.\n\n" +
+                  $"⚠ Nach dem Bestätigen die PIN.QES am Kartenterminal „{where}“ eingeben. Die Signatur ist echt, betrifft aber nur den Testtext und wird nicht gespeichert.\n\nFortfahren?",
+                  $"QES test signature with {card.DisplayName}.\n\n" +
+                  "The connector creates a qualified signature (CAdES) over a short test text. This checks HBA, signature certificate, PIN.QES and signature service in one go.\n\n" +
+                  $"⚠ After confirming, enter PIN.QES on card terminal \"{where}\". The signature is real but only covers the test text and is not stored.\n\nContinue?"),
+                L("QES-Probesignatur", "QES test signature"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        SetBusy(true, L($"Warte auf PIN.QES am Kartenterminal „{where}“ …", $"Waiting for PIN.QES on card terminal \"{where}\" …"));
+        try
+        {
+            using var client = CreateClient();
+            var result = await client.QesTestSignatureAsync(card.CardHandle, CancellationToken.None);
+            Log($"QES-Probesignatur {card.DisplayName}: {result.Result}" + (result.Ok ? $" ({result.SignatureBytes} Byte)" : $" {result.ErrorCode} {result.ErrorText}"));
+            var text = result.Ok
+                ? L($"Die Probesignatur ist gelungen ✓\n\n{card.DisplayName} kann qualifiziert signieren (Signatur {result.SignatureBytes} Byte).",
+                    $"The test signature succeeded ✓\n\n{card.DisplayName} can create qualified signatures (signature {result.SignatureBytes} bytes).")
+                : L($"Die Probesignatur ist fehlgeschlagen.\n\nErgebnis: {result.Result}" + (result.ErrorText is null ? "" : $"\n{result.ErrorText}"),
+                    $"The test signature failed.\n\nResult: {result.Result}" + (result.ErrorText is null ? "" : $"\n{result.ErrorText}"));
+            System.Windows.MessageBox.Show(this, text, L("QES-Probesignatur", "QES test signature"), MessageBoxButton.OK,
+                result.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            Log("✖ " + ex.Message);
+            ShowWarning(DescribeException(ex));
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+
+        await RefreshPinStatusAsync(card);
+    }
+
+    /// <summary>Alle bekannten Zertifikatsablaeufe – dieselbe Auswahl wie im Bereich Zertifikate.</summary>
+    internal static List<ConnectorCalendarEntry> CalendarEntries(ConnectorSnapshot snapshot, string? clientSubject, DateTime? clientNotAfter)
+    {
+        var list = new List<ConnectorCalendarEntry>();
+        foreach (var card in CardOrder(snapshot.Cards))
+        {
+            // Versichertenkarten gehoeren nicht in einen Praxiskalender.
+            if (card.IsEgk)
+                continue;
+            var owner = card.CardHolderName.Length > 0 ? $"{KindOf(card)} {card.CardHolderName}" : card.DisplayName;
+            foreach (var cert in card.Certificates.Where(c => c.NotAfter != default))
+                list.Add(new ConnectorCalendarEntry(cert.CertRef, owner, cert.NotAfter));
+            if (card.Certificates.Count == 0 && card.CertificateExpirationDate is { } expiry && expiry != default)
+                list.Add(new ConnectorCalendarEntry(L("Kartenzertifikat", "Card certificate"), owner, expiry));
+        }
+        if (clientNotAfter is { } notAfter && notAfter != default)
+            list.Add(new ConnectorCalendarEntry(L("Clientsystem-Zertifikat", "Client system certificate"),
+                string.IsNullOrWhiteSpace(clientSubject) ? "P12" : clientSubject, notAfter));
+        return list;
+    }
+
+    private void ExportCalendar_Click(object sender, RoutedEventArgs e)
+    {
+        if (_snapshot is null)
+        {
+            ShowWarning(L("Noch keine Konnektor-Daten vorhanden.", "No connector data available yet."));
+            return;
+        }
+
+        var monitor = _ownerMain.ConnectorMonitor;
+        var entries = CalendarEntries(_snapshot, monitor.ClientCertificateSubject, monitor.ClientCertificateNotAfter);
+        if (entries.Count == 0)
+        {
+            ShowWarning(L("Es sind keine Ablaufdaten bekannt. Karte wählen und „Alle Zertifikate lesen“ verwenden.",
+                          "No expiry dates are known. Select a card and use “Read all certificates”."));
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = L("Ablaufkalender speichern", "Save expiry calendar"),
+            Filter = L("Kalender (*.ics)|*.ics", "Calendar (*.ics)|*.ics"),
+            FileName = L("TI-Zertifikate.ics", "TI-certificates.ics"),
+            AddExtension = true,
+            DefaultExt = ".ics"
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, ConnectorCalendarExport.Build(entries, DateTime.UtcNow), new UTF8Encoding(false));
+            FooterText.Text = L($"{entries.Count} Ablauftermine exportiert – Datei in Outlook bzw. den Kalender importieren.",
+                                $"{entries.Count} expiry dates exported – import the file into Outlook or your calendar.");
+            Log($"Ablaufkalender: {entries.Count} Termine → {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning(ex.Message);
+        }
+    }
+
+    // =================================================================
     // Bericht / Hilfen
     // =================================================================
 
@@ -2490,6 +2663,7 @@ public partial class ConnectorWindow : Window
             sb.AppendLine($"Konnektor: {d.ProductVendorName} {d.ProductName} ({d.ProductCode}), PTV {d.ProductTypeVersion}, FW {d.FirmwareVersion}, HW {d.HardwareVersion}");
             sb.AppendLine("Dienste: " + string.Join(", ", d.Services.Select(x => $"{x.Name} {x.Version}")));
         }
+        sb.AppendLine("Uhrzeit: " + ConnectorClock.Describe(s.ClockOffset));
         if (s.Resource is { } r)
         {
             sb.AppendLine($"VPN TI: {r.VpnTiStatus} ({r.VpnTiTimestamp:g})  VPN SIS: {r.VpnSisStatus}");

@@ -146,11 +146,21 @@ Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf,
 | Karten | `EventService.GetCards` | SMC-B / SM-B / HSM-B, HBA, eGK, gSMC-KT: Inhaber, ICCSN, Slot, Ablaufdatum |
 | PIN-Status | `CardService.GetPinStatus` | verifiziert, Transport-PIN, gesperrt, deaktiviert, Restversuche |
 | Zertifikate | `CertificateService.ReadCardCertificate` | C.AUT, C.ENC, C.SIG, C.QES: Ablauf, Aussteller, Telematik-ID, Rolle |
+| QES-Probesignatur | `SignatureService.GetJobNumber` / `SignDocument` | nur auf Knopfdruck: Testsignatur mit dem HBA (PIN.QES am Terminal) |
+| Uhrzeit | HTTP-`Date`-Header jeder Antwort | Abweichung der Konnektor-Uhr gegenüber dem PC |
 | Live-Ereignisse | EventService-Abo + **CETP** | `CARD/INSERTED`, `CARD/REMOVED`, `CT/CONNECTED`, `CT/DISCONNECTED`, `CERT/CARD/STATUS` |
 
 **TLS:** Der HTTPS-Zugang zum Konnektor nutzt BouncyCastle (TLS 1.2, optional 1.3) mit **Brainpool** (P-256/P-384/P-512) und **RSA** bzw. NIST-Kurven. Das Clientsystem-Zertifikat (P12) wird nur im Speicher gehalten; die Kette geht vollständig mit. Beim ersten Verbinden wird der SHA-256-Fingerprint des Konnektor-Zertifikats angezeigt und nach Bestätigung **gepinnt**. Ist TLS im SDS oder in den Einstellungen vorgeschrieben, läuft auch die Ereignissenke über TLS (CETP1: die App ist TLS-Server, der Konnektor TLS-Client).
 
 **Hintergrund-Toasts (abschaltbar):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Terminal getrennt, keine SMC-B gesteckt, Transport-PIN.
+
+**Neu in 3.2:**
+- **Neues Konnektor-Fenster** im Fluent-Stil: Kopf mit Zustand und Kennzahl-Kacheln, Navigationsleiste mit Zählern, Detailansichten mit Eigenschafts-Kacheln und PIN-Tabelle, Zertifikats-Kacheln mit Resttagen.
+- **Erinnerung an die SMC-B-Freischaltung:** nach dem Start der App (PC-Neustart) und nachdem der Konnektor wieder erreichbar ist (Stromausfall, Neustart) erscheint ein Toast, wenn die SMC-B nicht PIN-verifiziert ist – mit Knopf **„Jetzt freischalten“**, der das Konnektor-Fenster öffnet und die PIN-Eingabe am Kartenterminal startet (erfordert „PIN-Verwaltung erlauben“).
+- **Ablaufkalender:** im Bereich **Zertifikate** alle Zertifikatsabläufe als `.ics`-Datei für Outlook bzw. den Kalender exportieren – ganztägige Termine mit Erinnerungen 90, 30 und 7 Tage vorher. Erneuter Import aktualisiert die Termine statt sie zu verdoppeln.
+- **QES-Probesignatur:** beim HBA prüft ein Knopf, ob qualifiziert signiert werden kann (`SignatureService.GetJobNumber` + `SignDocument`, CAdES über einen Testtext, PIN.QES am Kartenterminal) – nicht nur, ob die Karte gesteckt ist.
+- **Zeitabweichung:** die Uhr des Konnektors wird bei jedem Abruf mit der PC-Uhr verglichen (HTTP-`Date`-Header). Ab 2 Minuten Abweichung gibt es eine Warnung, ab 5 Minuten einen Fehler – falsche Uhrzeiten brechen TLS und Signaturen. Der Wert steht auch in der Übersicht und im Bericht.
+- Fehlerbehebungen: gelesene Zertifikate verschwinden nicht mehr nach dem nächsten Hintergrund-Abruf, Rückfall ohne Benutzer-ID gilt für den ganzen Abruf, C.QES neu gesteckter Karten wird sofort gelesen, robusteres Stoppen der Ereignissenke.
 
 **Neu in 3.1:**
 - **Zertifikats-Ablaufwarnung** für SMC-B, HBA und das Clientsystem-Zertifikat (P12) in drei Stufen — 90, 30 und 7 Tage vorher, dazu „abgelaufen“. Jede Stufe kommt je Zertifikat genau einmal, auch über Neustarts hinweg. Die Resttage stehen im Reiter **Zertifikate**.

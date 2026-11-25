@@ -345,7 +345,15 @@ public partial class MainWindow : Window
 
     public void HandleToastActivation(string? focusKey)
     {
-        if (string.Equals(focusKey, "konnektor", StringComparison.OrdinalIgnoreCase))
+        if (ConnectorSmcbReminder.ParseFocus(focusKey) is { } smcb)
+        {
+            OpenConnectorWindow();
+            _ = _connectorWindow?.ShowSmcbAsync(smcb.CardId, smcb.Unlock);
+            return;
+        }
+
+        // Alle Konnektor-Toasts ("konnektor", "konnektor-konfig", …) oeffnen das Konnektor-Fenster.
+        if (focusKey is not null && focusKey.StartsWith("konnektor", StringComparison.OrdinalIgnoreCase))
         {
             OpenConnectorWindow();
             return;
