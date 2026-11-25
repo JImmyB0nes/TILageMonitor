@@ -59,6 +59,13 @@ public sealed class ConnectorMonitor : IDisposable
     /// <summary>Zeitpunkt des letzten erfolgreichen Subscribe/Renew – fuer Firmware ohne GetSubscription.</summary>
     private DateTime _lastSubscribedAt = DateTime.MinValue;
 
+    /// <summary>
+    /// SMC-B-Erinnerung scharf: beim Start der Ueberwachung (PC-/App-Neustart) und nachdem der
+    /// Konnektor wieder erreichbar ist (Stromausfall, Konnektor-Neustart).
+    /// </summary>
+    private bool _smcbReminderArmed = true;
+    private bool _smcbReminderAfterOutage;
+
     /// <summary>Gleiche Ereignisse (doppelte Abos, Wiederholungen) nur einmal melden.</summary>
     private readonly ConnectorEventDeduplicator _eventDedup = new(ConnectorEventNotifications.DuplicateWindow);
 
@@ -170,6 +177,8 @@ public sealed class ConnectorMonitor : IDisposable
         }
 
         _runningKey = key;
+        _smcbReminderArmed = true;
+        _smcbReminderAfterOutage = false;
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
         _loop = Task.Run(() => LoopAsync(token), token);
@@ -296,6 +305,8 @@ public sealed class ConnectorMonitor : IDisposable
                 // und ein frueheres "aufgegeben" soll die Wiederverbindung nicht blockieren.
                 _subscriptionAttempted = false;
                 _resubscribeAfterOutage = true;
+                _smcbReminderArmed = true;
+                _smcbReminderAfterOutage = true;
             }
             _consecutiveFailures = 0;
             _outageSince = null;
@@ -322,8 +333,10 @@ public sealed class ConnectorMonitor : IDisposable
                     _activeAlertKeys.Add(alert.Key);
             }
 
+            var smcbToastShown = false;
             if (settings.NotifyCertificateExpiry || settings.NotifyPinStatus)
-                NotifyLedgerWarnings(settings, snapshot);
+                smcbToastShown = NotifyLedgerWarnings(settings, snapshot);
+            RemindSmcb(settings, snapshot, smcbToastShown);
 
             if (settings.EventSubscriptionsEnabled)
                 await EnsureSubscriptionsAsync(client, snapshot, ct);
@@ -829,12 +842,52 @@ public sealed class ConnectorMonitor : IDisposable
     /// Ablauf- und PIN-Warnungen ueber den gespeicherten Ledger: jede Ablaufstufe einmal je
     /// Zertifikat, PIN-Meldungen nur beim Zustandswechsel – auch ueber Neustarts hinweg.
     /// </summary>
-    private void NotifyLedgerWarnings(ConnectorSettings settings, ConnectorSnapshot snapshot)
+    /// <returns>Ob dabei bereits ein Toast zur nicht freigeschalteten SMC-B kam.</returns>
+    private bool NotifyLedgerWarnings(ConnectorSettings settings, ConnectorSnapshot snapshot)
     {
         var due = ConnectorWarningStore.Update(ledger =>
             EvaluateLedger(settings, ToastService.AreNotificationsEnabled, snapshot, ClientCertificateSubject, ClientCertificateNotAfter, ledger, DateTime.Now));
+        var smcbShown = false;
         foreach (var alert in due)
-            Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
+        {
+            // Nicht freigeschaltete SMC-B: mit Knopf "Jetzt freischalten".
+            var smcb = alert.Key.EndsWith("-unverified", StringComparison.Ordinal)
+                ? snapshot.Cards.FirstOrDefault(c => c.IsSmcB && alert.Key.StartsWith($"pinwatch-{ConnectorSmcbReminder.CardId(c)}-", StringComparison.Ordinal))
+                : null;
+            if (smcb is not null)
+            {
+                smcbShown = true;
+                Notify(alert.Title, alert.Body, alert.Urgency, ConnectorSmcbReminder.ShowFocus(smcb),
+                    ConnectorSmcbReminder.ActionLabel, ConnectorSmcbReminder.UnlockFocus(smcb));
+            }
+            else
+                Notify(alert.Title, alert.Body, alert.Urgency, "konnektor");
+        }
+        return smcbShown;
+    }
+
+    /// <summary>
+    /// Einmal je Anlass (Start, Wiederverbindung) an eine nicht freigeschaltete SMC-B erinnern.
+    /// Bleibt scharf, solange der PIN-Status nicht lesbar ist – eine unklare Antwort ist keine
+    /// Entwarnung.
+    /// </summary>
+    private void RemindSmcb(ConnectorSettings settings, ConnectorSnapshot snapshot, bool alreadyShown)
+    {
+        if (!_smcbReminderArmed)
+            return;
+        var (state, card) = ConnectorSmcbReminder.Evaluate(snapshot);
+        if (state == ConnectorSmcbReminder.State.Unknown)
+            return;
+
+        _smcbReminderArmed = false;
+        if (state != ConnectorSmcbReminder.State.NotVerified || card is null || alreadyShown)
+            return;
+        if (!settings.MonitoringEnabled || !settings.NotifyPinStatus)
+            return;
+
+        var alert = ConnectorSmcbReminder.Build(card, _smcbReminderAfterOutage);
+        Notify(alert.Title, alert.Body, alert.Urgency, ConnectorSmcbReminder.ShowFocus(card),
+            ConnectorSmcbReminder.ActionLabel, ConnectorSmcbReminder.UnlockFocus(card));
     }
 
     /// <summary>
@@ -874,13 +927,13 @@ public sealed class ConnectorMonitor : IDisposable
             : L($"Konnektor nicht erreichbar ({_consecutiveFailures}× in Folge).", $"Connector unreachable ({_consecutiveFailures}× in a row).");
     }
 
-    private static void Notify(string title, string body, ToastUrgency urgency, string focusKey)
+    private static void Notify(string title, string body, ToastUrgency urgency, string focusKey, string? actionLabel = null, string? actionFocusKey = null)
     {
         // Toast-/Balloon-APIs am UI-Thread aufrufen (NotifyIcon-Fallback ist WinForms).
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
             return;
-        dispatcher.BeginInvoke(() => ToastService.Show(title, body, urgency, focusKey));
+        dispatcher.BeginInvoke(() => ToastService.Show(title, body, urgency, focusKey, actionLabel, actionFocusKey));
     }
 
     public void Dispose()

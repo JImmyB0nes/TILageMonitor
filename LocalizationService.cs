@@ -334,6 +334,8 @@ public static class LocalizationService
         ["Noch keine Ereignisse empfangen."] = "No events received yet.",
         ["Status · Terminals · Karten · PIN · Zertifikate"] = "Status · terminals · cards · PIN · certificates",
         // Konnektor-Fenster (Neugestaltung)
+        ["Ablaufkalender (.ics)"] = "Expiry calendar (.ics)",
+        ["Alle Zertifikatsabläufe als Kalenderdatei (.ics) für Outlook bzw. den Kalender speichern – mit Erinnerungen 90, 30 und 7 Tage vorher"] = "Save all certificate expiry dates as a calendar file (.ics) for Outlook or your calendar – with reminders 90, 30 and 7 days before",
         ["Ab wie vielen Resttagen ein Zertifikat als bald ablaufend gilt."] = "Number of remaining days from which a certificate counts as expiring soon.",
         ["Ablauf des letzten Abrufs"] = "Log of the last query",
         ["Abstand zwischen zwei Abrufen im Hintergrund."] = "Time between two background queries.",

@@ -738,6 +738,91 @@ public static class ConnectorProtocol
     }
 
     // ------------------------------------------------------------------
+    // SignatureService (QES-Probesignatur)
+    // ------------------------------------------------------------------
+
+    public const string DefaultSignatureServiceNs = "http://ws.gematik.de/conn/SignatureService/v7.4";
+    public static readonly XNamespace Dss = "urn:oasis:names:tc:dss:1.0:core:schema";
+
+    /// <summary>CAdES (CMS, RFC 5652) – die Signaturart, die jeder Konnektor fuer QES anbietet.</summary>
+    public const string CadesSignatureType = "urn:ietf:rfc:5652";
+
+    /// <summary>Jobnummer fuer SignDocument. Laut gemSpec_Kon muss sie vom Konnektor stammen.</summary>
+    public static XElement GetJobNumber(XNamespace sig, ConnectorSettings s) =>
+        new(sig + "GetJobNumber", Context(s));
+
+    public static string ParseJobNumber(XElement response) => Value(response, "JobNumber");
+
+    /// <summary>
+    /// SignDocument mit genau einem Dokument (CAdES, eingebetteter Inhalt). Reihenfolge laut
+    /// SignatureService.xsd: CardHandle, Context, TvMode, JobNumber, SignRequest.
+    /// </summary>
+    public static XElement SignDocument(XNamespace sig, ConnectorSettings s, string cardHandle, string jobNumber, byte[] document, string shortText)
+    {
+        var requestId = "TLM-" + Guid.NewGuid().ToString("N")[..12];
+        return new XElement(sig + "SignDocument",
+            new XAttribute(XNamespace.Xmlns + "dss", Dss.NamespaceName),
+            new XElement(Conn + "CardHandle", cardHandle),
+            Context(s),
+            new XElement(sig + "TvMode", "NONE"),
+            new XElement(sig + "JobNumber", jobNumber),
+            new XElement(sig + "SignRequest",
+                new XAttribute("RequestID", requestId),
+                new XElement(sig + "OptionalInputs",
+                    new XElement(Dss + "SignatureType", CadesSignatureType),
+                    new XElement(sig + "IncludeEContent", "true")),
+                new XElement(sig + "Document",
+                    new XAttribute("ID", requestId + "-Doc"),
+                    new XAttribute("ShortText", shortText),
+                    new XElement(Dss + "Base64Data",
+                        new XAttribute("MimeType", "text/plain; charset=utf-8"),
+                        Convert.ToBase64String(document))),
+                new XElement(sig + "IncludeRevocationInfo", "true")));
+    }
+
+    /// <summary>
+    /// Wertet die SignResponse aus. Der Status steht eine Ebene tiefer als bei den anderen
+    /// Operationen (SignDocumentResponse/SignResponse/Status), deshalb fängt ParseBody einen
+    /// Fehler hier nicht ab.
+    /// </summary>
+    public static ConnectorSignatureResult ParseSignResult(XElement response)
+    {
+        var signResponse = Descendants(response, "SignResponse").FirstOrDefault() ?? response;
+        var status = Descendants(signResponse, "Status").FirstOrDefault();
+        var result = status is null ? "" : Value(status, "Result");
+        var signature = Descendants(signResponse, "SignatureObject").FirstOrDefault();
+        var base64 = signature is null ? "" : Value(signature, "Base64Signature");
+        if (base64.Length == 0 && signature is not null)
+            base64 = signature.Value.Trim();
+
+        var ok = string.Equals(result, "OK", StringComparison.OrdinalIgnoreCase) && base64.Length > 0;
+        string? code = null;
+        string? text = null;
+        if (!ok && status is not null)
+        {
+            var trace = Descendants(status, "Trace").FirstOrDefault();
+            code = NullIfEmpty(trace is null ? Value(status, "Code") : Value(trace, "Code"));
+            text = NullIfEmpty(trace is null ? Value(status, "ErrorText") : Value(trace, "ErrorText"));
+        }
+
+        var length = 0;
+        if (base64.Length > 0)
+        {
+            try { length = Convert.FromBase64String(base64).Length; }
+            catch (FormatException) { ok = false; text ??= "Signatur ist kein gültiges Base64 / signature is not valid base64"; }
+        }
+
+        return new ConnectorSignatureResult
+        {
+            Ok = ok,
+            Result = string.IsNullOrWhiteSpace(result) ? "?" : result,
+            ErrorCode = code,
+            ErrorText = text is null ? null : ConnectorErrorCodes.Annotate(text, code),
+            SignatureBytes = length
+        };
+    }
+
+    // ------------------------------------------------------------------
     // XML-Helfer
     // ------------------------------------------------------------------
 

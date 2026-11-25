@@ -47,7 +47,9 @@ public static class ToastService
         string title,
         string body,
         ToastUrgency urgency = ToastUrgency.Info,
-        string? focusKey = null)
+        string? focusKey = null,
+        string? actionLabel = null,
+        string? actionFocusKey = null)
     {
         if (!AreNotificationsEnabled)
             return;
@@ -58,7 +60,7 @@ public static class ToastService
         _lastFocusKey = string.IsNullOrWhiteSpace(focusKey) ? null : focusKey;
 
         var notificationShown = ToastRegistration.IsRegistered &&
-            TryShowAppNotification(title, body, _lastFocusKey);
+            TryShowAppNotification(title, body, _lastFocusKey, actionLabel, actionFocusKey);
 
         if (!notificationShown)
             ShowBalloonFallback(title, body, urgency);
@@ -81,7 +83,7 @@ public static class ToastService
         }
     }
 
-    private static bool TryShowAppNotification(string title, string body, string? focusKey)
+    private static bool TryShowAppNotification(string title, string body, string? focusKey, string? actionLabel = null, string? actionFocusKey = null)
     {
         try
         {
@@ -92,6 +94,14 @@ public static class ToastService
 
             if (!string.IsNullOrWhiteSpace(focusKey))
                 builder.AddArgument("focus", focusKey);
+
+            // Optionaler Knopf: dieselbe Aktivierung, nur mit eigenem Fokus (z. B. "freischalten").
+            if (!string.IsNullOrWhiteSpace(actionLabel) && !string.IsNullOrWhiteSpace(actionFocusKey))
+            {
+                builder.AddButton(new AppNotificationButton(LocalizationService.Translate(actionLabel))
+                    .AddArgument("action", "open")
+                    .AddArgument("focus", actionFocusKey));
+            }
 
             var notification = builder.BuildNotification();
             AppNotificationManager.Default.Show(notification);

@@ -31,6 +31,9 @@ public static class ConnectorHealth
                 urgency));
         }
 
+        if (ConnectorClock.Evaluate(snapshot.ClockOffset) is { } clock)
+            alerts.Add(clock);
+
         foreach (var terminal in snapshot.Terminals.Where(t => t.Connected == false))
         {
             alerts.Add(new ConnectorAlert(

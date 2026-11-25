@@ -412,6 +412,22 @@ public sealed class ConnectorSnapshot
 
     /// <summary>Nicht-fatale Fehler einzelner Teilabfragen (Abruf läuft trotzdem weiter).</summary>
     public List<string> Warnings { get; set; } = new();
+
+    /// <summary>
+    /// Abweichung der Konnektor-Uhr gegenüber diesem PC (positiv: Konnektor geht vor). Aus dem
+    /// HTTP-Date-Header gemessen, null wenn der Konnektor keinen liefert.
+    /// </summary>
+    public TimeSpan? ClockOffset { get; set; }
+}
+
+/// <summary>Ergebnis einer Probesignatur (SignDocument).</summary>
+public sealed class ConnectorSignatureResult
+{
+    public bool Ok { get; init; }
+    public string Result { get; init; } = "";
+    public string? ErrorCode { get; init; }
+    public string? ErrorText { get; init; }
+    public int SignatureBytes { get; init; }
 }
 
 /// <summary>SOAP-Fault bzw. gematik-Fehler (GERROR) vom Konnektor.</summary>
