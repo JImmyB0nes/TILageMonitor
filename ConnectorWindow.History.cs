@@ -111,11 +111,11 @@ public partial class ConnectorWindow
                 var tile = new Border
                 {
                     Width = 26,
-                    Height = 22,
-                    CornerRadius = new CornerRadius(5),
+                    Height = 24,
+                    CornerRadius = new CornerRadius(7),
                     Background = Brush(StateBrushKey(lane, cell.State)),
-                    BorderBrush = selected ? Brush("TextMain") : Brush("BorderSubtle"),
-                    BorderThickness = new Thickness(selected ? 2 : 1),
+                    BorderBrush = selected ? Brush("AccentButtonBackground") : System.Windows.Media.Brushes.Transparent,
+                    BorderThickness = new Thickness(selected ? 2 : 0),
                     Margin = new Thickness(4, 3, 4, 3),
                     Cursor = System.Windows.Input.Cursors.Hand,
                     ToolTip = $"{day.Date.ToString("D", LocalizationService.DisplayCulture)}\n{LaneLabel(lane)}: {StateText(lane, cell)}",
@@ -196,8 +196,8 @@ public partial class ConnectorWindow
                 var cell = day.Hours[lane][h];
                 var block = new Border
                 {
-                    Height = 16,
-                    CornerRadius = new CornerRadius(3),
+                    Height = 18,
+                    CornerRadius = new CornerRadius(4),
                     Background = Brush(StateBrushKey(lane, cell.State)),
                     Margin = new Thickness(1, 2, 1, 2),
                     ToolTip = $"{h:00}:00–{h:00}:59 · {LaneLabel(lane)}: {StateText(lane, cell)}"

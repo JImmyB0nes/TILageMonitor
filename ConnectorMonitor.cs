@@ -71,6 +71,9 @@ public sealed class ConnectorMonitor : IDisposable
     private static readonly TimeSpan QesReadInterval = TimeSpan.FromHours(12);
     private DateTime _lastQesRead = DateTime.MinValue;
 
+    /// <summary>Karten, fuer die C.QES im laufenden Intervall schon versucht wurde.</summary>
+    private readonly HashSet<string> _qesAttempted = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Das Signaturzertifikat je Karte, damit der Alarm zwischen zwei Nachlesen
     /// nicht verschwindet. Nachgezogen wird ueber die Kartengriffangabe, die der Konnektor
     /// ueber die Laufzeit gleich haelt.</summary>
@@ -568,38 +571,53 @@ public sealed class ConnectorMonitor : IDisposable
     /// </remarks>
     private async Task ReadQesAsync(ConnectorClient client, ConnectorSnapshot snapshot, CancellationToken ct)
     {
-        if (DateTime.Now - _lastQesRead < QesReadInterval)
+        var due = DateTime.Now - _lastQesRead >= QesReadInterval;
+        if (due)
+        {
+            _lastQesRead = DateTime.Now;
+            _qesByCard.Clear();
+            _qesAttempted.Clear();
+        }
+
+        // Bekannte Zertifikate uebernehmen; neu gesteckte Karten (neuer Kartengriff) sofort
+        // nachlesen, statt bis zu 12 Stunden auf das naechste Intervall zu warten.
+        var pending = snapshot.Cards
+            .Where(c => c.SupportsPinManagement && !string.IsNullOrEmpty(c.CardHandle) && !_qesAttempted.Contains(c.CardHandle))
+            .ToList();
+        if (pending.Count == 0)
         {
             // Nachlesen ist selten, Bewerten ist staendig. Ohne die Uebernahme wuerde der
             // Alarm nur auf dem einen Poll erscheinen, auf dem gelesen wurde, und am
             // naechsten wieder weg sein – als Alarm taugt er so nicht, weil er bloe
             // anzeigt, dass eben gerade gelesen wurde.
-            foreach (var card in snapshot.Cards)
-                if (_qesByCard.TryGetValue(card.CardHandle, out var known))
-                    card.Certificates.Add(known);
+            AddKnownQes(snapshot);
             return;
         }
 
-        _lastQesRead = DateTime.Now;
-        _qesByCard.Clear();
-
-        foreach (var card in snapshot.Cards.Where(c => c.SupportsPinManagement))
+        foreach (var card in pending)
         {
             ct.ThrowIfCancellationRequested();
+            _qesAttempted.Add(card.CardHandle);
             try
             {
                 var qes = await client.ReadCardCertificateAsync(card.CardHandle, "C.QES", ct);
                 if (qes is not null)
-                {
-                    card.Certificates.Add(qes);
                     _qesByCard[card.CardHandle] = qes;
-                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // Karte fuehrt kein C.QES – das ist der Regelfall, keine Meldung.
             }
         }
+        AddKnownQes(snapshot);
+    }
+
+    private void AddKnownQes(ConnectorSnapshot snapshot)
+    {
+        foreach (var card in snapshot.Cards)
+            if (!string.IsNullOrEmpty(card.CardHandle) && _qesByCard.TryGetValue(card.CardHandle, out var known)
+                && !card.Certificates.Any(c => c.RefEquals(known.CertRef)))
+                card.Certificates.Add(known);
     }
 
     /// <summary>
@@ -708,7 +726,9 @@ public sealed class ConnectorMonitor : IDisposable
             return;
         _lastEventPoll = DateTime.Now;
 
-        var token = _cts?.Token ?? new CancellationToken(canceled: true);
+        CancellationToken token;
+        lock (_lifecycle)
+            token = _cts?.Token ?? new CancellationToken(canceled: true);
         if (token.IsCancellationRequested)
             return;
         _ = Task.Run(async () =>

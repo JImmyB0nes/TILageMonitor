@@ -139,8 +139,25 @@ public sealed class ConnectorEventStream : IDisposable
             {
                 return;
             }
+            catch (ObjectDisposedException)
+            {
+                // Listener wurde beim Stoppen abgebaut.
+                return;
+            }
+            catch (InvalidOperationException)
+            {
+                // Listener nicht mehr gestartet (Stop zwischen zwei Accept-Aufrufen).
+                return;
+            }
 
-            if (client.Client.RemoteEndPoint is not IPEndPoint remote || !ConnectorEventTo.IsAllowedPeer(remote, _allowedPeers))
+            IPAddress[] allowedPeers;
+            ConnectorEventSinkOptions? options;
+            lock (_gate)
+            {
+                allowedPeers = _allowedPeers;
+                options = _options;
+            }
+            if (client.Client.RemoteEndPoint is not IPEndPoint remote || !ConnectorEventTo.IsAllowedPeer(remote, allowedPeers))
             {
                 try { client.Dispose(); } catch { /* ignore */ }
                 continue;
@@ -155,7 +172,6 @@ public sealed class ConnectorEventStream : IDisposable
                 }
                 _clients.Add(client);
             }
-            var options = _options;
             _ = Task.Run(() => ReadLoopAsync(client, options, ct), ct);
         }
     }
