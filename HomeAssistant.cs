@@ -411,6 +411,14 @@ public static class HomeAssistantMqtt
     private static string? _slug;
     private static readonly Dictionary<string, string> SentConfigs = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Schluessel, die der Broker als gespeicherten Zustand fuer diese Praxis kennt – auch aus
+    /// frueheren Laeufen der App. Daraus werden Karten aufgeraeumt, die gezogen wurden, waehrend
+    /// die App nicht lief.
+    /// </summary>
+    private static readonly HashSet<string> RetainedKeys = new(StringComparer.Ordinal);
+    private static bool _cleanupPending;
+
     public static string BaseTopic(string slug) => $"{HomeAssistantStates.Prefix}/{slug}";
     public static string AvailabilityTopic(string slug) => $"{BaseTopic(slug)}/availability";
 
@@ -514,6 +522,14 @@ public static class HomeAssistantMqtt
                 _connectionKey = key;
                 _slug = slug;
                 SentConfigs.Clear();
+                lock (RetainedKeys)
+                    RetainedKeys.Clear();
+                connection.MessageReceived += OnMessage;
+                // Eigene Verfuegbarkeit mithoeren (ein zweiter PC derselben Praxis meldet beim
+                // Beenden "offline") und die gespeicherten Zustaende einsammeln.
+                await connection.SubscribeAsync([AvailabilityTopic(slug), $"{BaseTopic(slug)}/+/state"], ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(600), ct);
+                _cleanupPending = true;
             }
 
             var expireAfter = Math.Max(900, settings.PollMinutes * 60 * 3);
@@ -543,6 +559,25 @@ public static class HomeAssistantMqtt
                     await _connection.PublishAsync(gone, "", retain: true, ct);
                     SentConfigs.Remove(gone);
                 }
+
+                // Einmal je Verbindung: Karten aus frueheren Laeufen entfernen, die nicht mehr stecken.
+                if (_cleanupPending)
+                {
+                    _cleanupPending = false;
+                    var currentKeys = entities.Select(e => e.Key).ToHashSet(StringComparer.Ordinal);
+                    List<string> stale;
+                    lock (RetainedKeys)
+                        stale = RetainedKeys.Where(k => !currentKeys.Contains(k) && IsCardKey(k)).ToList();
+                    foreach (var staleKey in stale)
+                    {
+                        foreach (var component in new[] { "sensor", "binary_sensor" })
+                            await _connection.PublishAsync($"{DiscoveryPrefix}/{component}/{HomeAssistantStates.Prefix}_{slug}_{staleKey}/config", "", retain: true, ct);
+                        await _connection.PublishAsync($"{BaseTopic(slug)}/{staleKey}/state", "", retain: true, ct);
+                        await _connection.PublishAsync($"{BaseTopic(slug)}/{staleKey}/attributes", "", retain: true, ct);
+                        lock (RetainedKeys)
+                            RetainedKeys.Remove(staleKey);
+                    }
+                }
             }
 
             await _connection.PublishAsync(AvailabilityTopic(slug), "online", retain: true, ct);
@@ -558,6 +593,36 @@ public static class HomeAssistantMqtt
         finally
         {
             Lock.Release();
+        }
+    }
+
+    /// <summary>Kartenbezogene Schluessel – nur diese werden beim Aufraeumen entfernt.</summary>
+    internal static bool IsCardKey(string key) =>
+        key.EndsWith("_ablauf", StringComparison.Ordinal) && key != "clientsystem_ablauf" || key == "smcb_pin";
+
+    /// <summary>
+    /// Nachrichten aus den eigenen Abos. "offline" auf dem eigenen Verfuegbarkeits-Topic, waehrend
+    /// diese App laeuft, stammt von einem anderen PC derselben Praxis (dessen Last Will) – sofort
+    /// wieder "online" setzen. Gespeicherte Zustaende merken fuers Aufraeumen.
+    /// </summary>
+    private static void OnMessage(MqttConnection sender, string topic, string payload)
+    {
+        var slug = _slug;
+        if (slug is null || !ReferenceEquals(sender, _connection))
+            return;
+        if (topic == AvailabilityTopic(slug))
+        {
+            if (payload == "offline")
+                _ = sender.PublishAsync(topic, "online", retain: true, CancellationToken.None)
+                    .ContinueWith(_ => { }, TaskContinuationOptions.OnlyOnFaulted);
+            return;
+        }
+        var prefix = BaseTopic(slug) + "/";
+        if (payload.Length > 0 && topic.StartsWith(prefix, StringComparison.Ordinal) && topic.EndsWith("/state", StringComparison.Ordinal))
+        {
+            var key = topic[prefix.Length..^"/state".Length];
+            lock (RetainedKeys)
+                RetainedKeys.Add(key);
         }
     }
 

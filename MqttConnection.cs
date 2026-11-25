@@ -32,8 +32,12 @@ public sealed class MqttConnection : IAsyncDisposable
     private CancellationTokenSource? _loopCts;
     private Task? _readLoop;
     private Task? _pingLoop;
+    private int _packetId;
 
     public MqttConnection(MqttOptions options) => _options = options;
+
+    /// <summary>Eingehende Nachricht (Topic, Inhalt) aus einem Abo – auf dem Lesefaden.</summary>
+    public event Action<MqttConnection, string, string>? MessageReceived;
 
     public bool IsConnected => _tcp?.Connected == true && _stream is not null && _readLoop is { IsCompleted: false };
 
@@ -68,6 +72,13 @@ public sealed class MqttConnection : IAsyncDisposable
 
     public Task PublishAsync(string topic, string payload, bool retain, CancellationToken ct) =>
         WriteAsync(BuildPublish(topic, Encoding.UTF8.GetBytes(payload), retain), ct);
+
+    /// <summary>Abonniert Topics mit QoS 0. Gespeicherte (retained) Nachrichten kommen sofort.</summary>
+    public Task SubscribeAsync(IEnumerable<string> topics, CancellationToken ct)
+    {
+        var id = (ushort)(Interlocked.Increment(ref _packetId) % 65535 + 1);
+        return WriteAsync(BuildSubscribe(id, topics), ct);
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -121,15 +132,47 @@ public sealed class MqttConnection : IAsyncDisposable
         catch { /* Ende der Verbindung – der Leser merkt es ebenfalls */ }
     }
 
-    private static async Task ReadLoopAsync(Stream stream, CancellationToken ct)
+    private async Task ReadLoopAsync(Stream stream, CancellationToken ct)
     {
-        // Eingehendes (PINGRESP) nur abholen, damit der Puffer nicht vollläuft.
+        // PINGRESP und SUBACK nur abholen; PUBLISH aus Abos an den Empfaenger weiterreichen.
         try
         {
             while (!ct.IsCancellationRequested)
-                await ReadPacketAsync(stream, ct);
+            {
+                var (type, body) = await ReadPacketAsync(stream, ct);
+                if (type == 3 && TryParsePublish(body, out var topic, out var payload))
+                {
+                    try { MessageReceived?.Invoke(this, topic, payload); }
+                    catch { /* Empfaenger darf den Lesefaden nicht beenden */ }
+                }
+            }
         }
         catch { /* Verbindung beendet */ }
+    }
+
+    /// <summary>PUBLISH mit QoS 0 zerlegen (Abos dieser App sind immer QoS 0).</summary>
+    internal static bool TryParsePublish(byte[] body, out string topic, out string payload)
+    {
+        topic = payload = "";
+        if (body.Length < 2)
+            return false;
+        var length = (body[0] << 8) | body[1];
+        if (body.Length < 2 + length)
+            return false;
+        topic = Encoding.UTF8.GetString(body, 2, length);
+        payload = Encoding.UTF8.GetString(body, 2 + length, body.Length - 2 - length);
+        return true;
+    }
+
+    internal static byte[] BuildSubscribe(ushort packetId, IEnumerable<string> topics)
+    {
+        var body = new List<byte> { (byte)(packetId >> 8), (byte)(packetId & 0xFF) };
+        foreach (var topic in topics)
+        {
+            AppendString(body, topic);
+            body.Add(0); // QoS 0
+        }
+        return Frame(0x82, body);
     }
 
     // ------------------------------------------------------------------

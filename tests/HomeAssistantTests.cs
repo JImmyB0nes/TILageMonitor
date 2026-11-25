@@ -183,6 +183,29 @@ public class HomeAssistantMqttTests
     }
 
     [Fact]
+    public void Subscribe_and_publish_packets_round_trip()
+    {
+        var subscribe = MqttConnection.BuildSubscribe(7, ["tilage/x/availability"]);
+        Assert.Equal(0x82, subscribe[0]);
+        Assert.Equal(7, (subscribe[2] << 8) | subscribe[3]);
+
+        var publish = MqttConnection.BuildPublish("tilage/x/vpn_ti/state", System.Text.Encoding.UTF8.GetBytes("on"), retain: true);
+        Assert.Equal(0x31, publish[0]);
+        Assert.True(MqttConnection.TryParsePublish(publish[2..], out var topic, out var payload));
+        Assert.Equal("tilage/x/vpn_ti/state", topic);
+        Assert.Equal("on", payload);
+    }
+
+    [Fact]
+    public void Only_card_entities_are_cleaned_up()
+    {
+        Assert.True(HomeAssistantMqtt.IsCardKey("hba_890123_ablauf"));
+        Assert.True(HomeAssistantMqtt.IsCardKey("smcb_pin"));
+        Assert.False(HomeAssistantMqtt.IsCardKey("clientsystem_ablauf"));
+        Assert.False(HomeAssistantMqtt.IsCardKey("vpn_ti"));
+    }
+
+    [Fact]
     public void Connect_packet_carries_will_and_credentials()
     {
         var packet = MqttConnection.BuildConnect(new MqttOptions("h", 1883, false, "user", "pw", "client", "tilage/x/availability", "offline", TimeSpan.FromSeconds(60)));

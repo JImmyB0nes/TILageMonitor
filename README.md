@@ -280,7 +280,7 @@ template:
           {{ (now() - as_datetime(states('sensor.tilage_praxis_mueller_app_lebenszeichen'))).total_seconds() < 900 }}
 ```
 
-Unter MQTT zusätzlich: Alle Sensoren einer Praxis werden **„nicht verfügbar“**, sobald die Verbindung der App abreißt – eine Automation auf `unavailable` reicht dann.
+Unter MQTT zusätzlich: Alle Sensoren einer Praxis werden **„nicht verfügbar“**, sobald die Verbindung der App abreißt – eine Automation auf `unavailable` reicht dann. Karten, die gezogen wurden, während die App nicht lief, räumt die App beim nächsten Verbinden selbst aus Home Assistant. Melden mehrere PCs derselben Praxis unter demselben Namen, bleibt die Praxis „verfügbar“, solange einer davon läuft.
 
 Unter REST werden die Sensoren bei jedem Abruf neu gesetzt; nach einem Neustart von Home Assistant erscheinen sie mit dem nächsten Abruf wieder.
 
