@@ -311,6 +311,12 @@ public static class HomeAssistantPublisher
             return;
         if (!await Gate.WaitAsync(0, ct))
             return; // vorheriger Versand haengt noch – nicht stapeln
+        // Obergrenze fuer einen Versand: ein Broker, der den Handshake nie beantwortet, darf
+        // den Versand nicht fuer immer festhalten.
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(90));
+        var outer = ct;
+        ct = limit.Token;
         try
         {
             if (settings.HomeAssistantUsesMqtt)
@@ -349,7 +355,7 @@ public static class HomeAssistantPublisher
             LastError = null;
             LastCount = current.Count;
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (outer.IsCancellationRequested)
         {
         }
         catch (Exception ex)
@@ -537,7 +543,9 @@ public static class HomeAssistantMqtt
             var current = new HashSet<string>(StringComparer.Ordinal);
             foreach (var entity in entities)
             {
-                var message = Build(entity, slug, input.Name, input.Snapshot?.Directory, expireAfter);
+                // Geraeteangaben aus dem letzten bekannten Stand: sonst wechselten Hersteller und
+                // Firmware bei jedem Ausfall, und Home Assistant schriebe das Geraet staendig um.
+                var message = Build(entity, slug, input.Name, (input.Snapshot ?? input.LastKnownSnapshot)?.Directory, expireAfter);
                 current.Add(message.ConfigTopic);
                 if (!SentConfigs.TryGetValue(message.ConfigTopic, out var sent) || sent != message.ConfigJson)
                 {
@@ -558,6 +566,13 @@ public static class HomeAssistantMqtt
                 {
                     await _connection.PublishAsync(gone, "", retain: true, ct);
                     SentConfigs.Remove(gone);
+                    // Gespeicherten Zustand mit wegraeumen, damit beim Broker nichts liegen bleibt.
+                    var objectId = gone.Split('/')[2];
+                    var goneKey = objectId[$"{HomeAssistantStates.Prefix}_{slug}_".Length..];
+                    await _connection.PublishAsync($"{BaseTopic(slug)}/{goneKey}/state", "", retain: true, ct);
+                    await _connection.PublishAsync($"{BaseTopic(slug)}/{goneKey}/attributes", "", retain: true, ct);
+                    lock (RetainedKeys)
+                        RetainedKeys.Remove(goneKey);
                 }
 
                 // Einmal je Verbindung: Karten aus frueheren Laeufen entfernen, die nicht mehr stecken.
@@ -669,9 +684,9 @@ public static class HomeAssistantMqtt
             await connection.DisposeAsync();
             return null;
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            return LocalizationService.Pick("Zeitüberschreitung – MQTT-Broker antwortet nicht.", "Timeout – MQTT broker does not respond.");
+            return LocalizationService.Pick("Zeitüberschreitung – MQTT-Broker antwortet nicht. Adresse, Port und TLS prüfen.", "Timeout – MQTT broker does not respond. Check address, port and TLS.");
         }
         catch (Exception ex)
         {
