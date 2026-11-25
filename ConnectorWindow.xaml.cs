@@ -172,8 +172,10 @@ public partial class ConnectorWindow : Window
     /// </summary>
     private void UpdateNavCounts(ConnectorSnapshot snapshot)
     {
-        NavCardsCount.Text = snapshot.Cards.Count > 0 ? $"  {snapshot.Cards.Count}" : "";
-        NavTerminalsCount.Text = snapshot.Terminals.Count > 0 ? $"  {snapshot.Terminals.Count}" : "";
+        NavCardsCount.Text = snapshot.Cards.Count.ToString(CultureInfo.InvariantCulture);
+        NavCardsBadge.Visibility = snapshot.Cards.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        NavTerminalsCount.Text = snapshot.Terminals.Count.ToString(CultureInfo.InvariantCulture);
+        NavTerminalsBadge.Visibility = snapshot.Terminals.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // =================================================================
@@ -287,7 +289,7 @@ public partial class ConnectorWindow : Window
 
     private void UpdateClientCertInfo(ConnectorSettings s)
     {
-        ClientCertInfo.Text = "";
+        ClientCertInfo.Text = L("Noch kein Client-Zertifikat geladen.", "No client certificate loaded yet.");
         if (string.IsNullOrWhiteSpace(s.ClientCertificatePath) || !File.Exists(s.ClientCertificatePath))
             return;
         try
@@ -658,11 +660,24 @@ public partial class ConnectorWindow : Window
         _lastStatus = (title, detail, statusKey, glyph);
         StatusTitle.Text = title;
         StatusDetail.Text = detail;
-        StatusGlyph.Text = glyph;
+        StatusGlyph.Text = FluentGlyph(glyph);
         StatusIconCircle.Background = Brush(statusKey);
         StatusBanner.Background = Brush(statusKey + "Surface");
         StatusBanner.BorderBrush = Brush(statusKey + "Border");
     }
+
+    /// <summary>
+    /// Die Aufrufer reichen weiterhin einfache Zeichen (✓, ✕, ›, •) – im Kopf stehen sie als
+    /// Fluent-Symbol. Unbekanntes bleibt, wie es ist.
+    /// </summary>
+    private static string FluentGlyph(string glyph) => glyph switch
+    {
+        "\u2713" => "\uE73E", // Haken
+        "\u2715" => "\uE711", // Kreuz
+        "\u203A" => "\uE7BA", // Warnung
+        "\u2022" or "" => "\uE703", // Verbindung
+        _ => glyph
+    };
 
     /// <summary>
     /// Kennzahl im Banner: winzige Bezeichnung, darunter der Wert. So ist der Zustand auf
@@ -672,39 +687,47 @@ public partial class ConnectorWindow : Window
     {
         var color = ok is true ? "StatusOk" : ok is false ? "StatusOutage" : "StatusEmpty";
         var value = ok is true ? L("ja", "yes") : ok is false ? L("nein", "no") : L("unbekannt", "unknown");
-        var chip = Kpi(label, value, color);
-        var dot = new Border
-        {
-            Width = 8,
-            Height = 8,
-            CornerRadius = new CornerRadius(4),
-            Background = Brush(color),
-            Margin = new Thickness(0, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        if (chip.Child is System.Windows.Controls.Panel panel)
-            panel.Children.Insert(0, dot);
-        return chip;
+        return Kpi(label, value, color, dot: true);
     }
 
-    private Border Kpi(string label, string value, string? colorKey = null)
+    /// <summary>
+    /// Kennzahl-Kachel im Kopf: oben die Bezeichnung, darunter groß der Wert – bei Ampelwerten
+    /// mit farbigem Punkt davor. Alle Kacheln sind gleich breit (UniformGrid).
+    /// </summary>
+    private Border Kpi(string label, string value, string? colorKey = null, bool dot = false)
     {
         var panel = new StackPanel();
         panel.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 10,
+            FontSize = 11,
             FontWeight = FontWeights.SemiBold,
-            Foreground = Brush("TextMuted")
+            Foreground = Brush("TextMuted"),
+            TextTrimming = TextTrimming.CharacterEllipsis
         });
-        panel.Children.Add(new TextBlock
+        var line = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+        if (dot)
+        {
+            line.Children.Add(new Border
+            {
+                Width = 10,
+                Height = 10,
+                CornerRadius = new CornerRadius(5),
+                Background = Brush(colorKey ?? "StatusEmpty"),
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+        }
+        line.Children.Add(new TextBlock
         {
             Text = value,
-            FontSize = 13,
+            FontSize = 18,
             FontWeight = FontWeights.SemiBold,
-            Foreground = Brush(colorKey ?? "TextMain"),
-            Margin = new Thickness(0, 1, 0, 0)
+            Foreground = Brush(dot ? "TextMain" : colorKey ?? "TextMain"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
         });
+        panel.Children.Add(line);
         return new Border { Child = panel, Style = (Style)FindResource("KpiStyle") };
     }
 
@@ -732,11 +755,11 @@ public partial class ConnectorWindow : Window
         AlertsPanel.Children.Clear();
         foreach (var alert in alerts.OrderByDescending(a => a.Urgency))
         {
-            var icon = alert.Urgency == ToastUrgency.Error ? "⛔" : alert.Urgency == ToastUrgency.Warning ? "⚠" : "ℹ";
-            AlertsPanel.Children.Add(Alert($"{icon}  {alert.Title}", alert.Body, alert.Urgency == ToastUrgency.Error ? "StatusOutage" : "StatusPartial"));
+            var glyph = alert.Urgency == ToastUrgency.Error ? "\uEA39" : alert.Urgency == ToastUrgency.Warning ? "\uE7BA" : "\uE946";
+            AlertsPanel.Children.Add(Alert(alert.Title, alert.Body, alert.Urgency == ToastUrgency.Error ? "StatusOutage" : "StatusPartial", glyph));
         }
         foreach (var warning in warnings)
-            AlertsPanel.Children.Add(Alert("ℹ  " + L("Teilabfrage fehlgeschlagen", "Partial query failed"), warning, null));
+            AlertsPanel.Children.Add(Alert(L("Teilabfrage fehlgeschlagen", "Partial query failed"), warning, null));
 
         AlertsCard.Visibility = AlertsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -746,14 +769,32 @@ public partial class ConnectorWindow : Window
     /// gesendete Nachricht – das sprengt jede Maske. Der Kernsatz steht oben, alles Weitere
     /// erst auf Knopfdruck. Der volle Text bleibt im Protokollreiter und im Bericht erhalten.
     /// </summary>
-    private UIElement Alert(string title, string body, string? colorKey)
+    private UIElement Alert(string title, string body, string? colorKey, string glyph = "\uE946")
     {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var icon = new TextBlock
+        {
+            Text = glyph,
+            FontFamily = FluentFont,
+            FontSize = 16,
+            Foreground = Brush(colorKey ?? "TextMuted"),
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 1, 12, 0)
+        };
+        grid.Children.Add(icon);
+
+        var panel = new StackPanel();
+        Grid.SetColumn(panel, 1);
+        grid.Children.Add(panel);
         panel.Children.Add(new TextBlock
         {
             Text = title,
+            FontSize = 13,
             FontWeight = FontWeights.SemiBold,
-            Foreground = colorKey is null ? Brush("TextMain") : Brush(colorKey),
+            Foreground = Brush("TextMain"),
             TextWrapping = TextWrapping.Wrap
         });
 
@@ -767,7 +808,7 @@ public partial class ConnectorWindow : Window
             FontSize = 12,
             Foreground = Brush("TextMuted"),
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 2, 0, 0)
+            Margin = new Thickness(0, 3, 0, 0)
         });
 
         // Alles ab der zweiten Zeile ist Zusatzmaterial (IDs, Namespaces, XML): nur bei Bedarf.
@@ -778,20 +819,36 @@ public partial class ConnectorWindow : Window
                 Header = L("Details anzeigen", "Show details"),
                 FontSize = 11,
                 Foreground = Brush("TextMuted"),
-                Margin = new Thickness(0, 4, 0, 0)
+                Padding = new Thickness(0, 4, 0, 4),
+                Margin = new Thickness(0, 4, 0, 0),
+                Style = (Style)FindResource("ModernExpanderStyle")
             };
             more.Content = new TextBlock
             {
                 Text = string.Join("\n", lines.Skip(1)).Trim(),
-                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono, Consolas"),
                 FontSize = 11,
                 Foreground = Brush("TextMuted"),
-                TextWrapping = TextWrapping.Wrap
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 6, 0, 0)
             };
             panel.Children.Add(more);
         }
-        return panel;
+
+        // Getönte Zeile in der Farbe der Dringlichkeit – wie die Meldungen im Hauptfenster.
+        return new Border
+        {
+            Child = grid,
+            Background = colorKey is null ? Brush("ChipBackground") : Brush(colorKey + "Surface"),
+            BorderBrush = colorKey is null ? Brush("BorderSubtle") : Brush(colorKey + "Border"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14, 12, 14, 12),
+            Margin = new Thickness(0, 0, 0, 8)
+        };
     }
+
+    private static readonly System.Windows.Media.FontFamily FluentFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
 
     /// <summary>
     /// Karte rein/raus. Gezogen wird der Stand der Hintergrundueberwachung, weil der die
@@ -843,14 +900,26 @@ public partial class ConnectorWindow : Window
             if (isOurs)
                 ours++;
 
-            var panel = new StackPanel { Margin = new Thickness(0, 3, 0, 3) };
-            panel.Children.Add(new TextBlock
+            var panel = new StackPanel();
+            var head = new DockPanel();
+            if (isOurs)
             {
-                Text = isOurs ? sub.Topic + "  ← " + L("diese App", "this app") : sub.Topic,
-                FontSize = 12,
-                FontWeight = isOurs ? FontWeights.Bold : FontWeights.SemiBold,
-                TextWrapping = TextWrapping.Wrap
+                var mineBadge = Badge(L("diese App", "this app"), "StatusMaintenance");
+                DockPanel.SetDock(mineBadge, Dock.Right);
+                mineBadge.Margin = new Thickness(10, 0, 0, 0);
+                mineBadge.VerticalAlignment = VerticalAlignment.Center;
+                head.Children.Add(mineBadge);
+            }
+            head.Children.Add(new TextBlock
+            {
+                Text = sub.Topic,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brush("TextMain"),
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
             });
+            panel.Children.Add(head);
             var tail = new List<string> { sub.EventTo };
             if (sub.TerminationTime is { } until)
             {
@@ -865,10 +934,20 @@ public partial class ConnectorWindow : Window
                 Text = string.Join(" · ", tail.Where(t => !string.IsNullOrWhiteSpace(t))),
                 FontSize = 11,
                 Foreground = sub.Alive(DateTime.Now) ? Brush("TextMuted") : Brush("StatusOutage"),
-                TextWrapping = TextWrapping.Wrap
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 3, 0, 0)
             };
             panel.Children.Add(line);
-            SubscriptionsList.Items.Add(panel);
+            SubscriptionsList.Items.Add(new Border
+            {
+                Child = panel,
+                Background = Brush(isOurs ? "StatusMaintenanceSurface" : "ChipBackground"),
+                BorderBrush = Brush(isOurs ? "StatusMaintenanceBorder" : "BorderSubtle"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 6)
+            });
         }
 
         if (snapshot.Subscriptions.Count > 0)
@@ -1005,18 +1084,19 @@ public partial class ConnectorWindow : Window
             var panel = new StackPanel();
             panel.Children.Add(new TextBlock
             {
-                Text = label.ToUpperInvariant(),
-                FontSize = 10,
+                Text = label,
+                FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush("TextMuted")
             });
             panel.Children.Add(new TextBlock
             {
                 Text = value,
-                FontSize = 12,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
                 Foreground = Brush("TextMain"),
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 1, 0, 0)
+                Margin = new Thickness(0, 3, 0, 0)
             });
             ConnectorInfoGrid.Children.Add(new Border
             {
@@ -1087,49 +1167,98 @@ public partial class ConnectorWindow : Window
             any = true;
             var daysLeft = ConnectorCertificateExpiry.DaysLeft(notAfter, now);
             var color = ConnectorCertificateExpiry.BrushKeyFor(daysLeft);
-            var tile = new Border
-            {
-                Style = (Style)FindResource("SubtlePanelStyle"),
-                Margin = new Thickness(0, 0, 0, 10)
-            };
+
+            // Titel "Karte · Ref" aufteilen: oben die Art (C.AUT …), darunter wem sie gehoert.
+            var cut = title.LastIndexOf(" · ", StringComparison.Ordinal);
+            var owner = cut > 0 ? title[..cut] : title;
+            var kind = cut > 0 ? title[(cut + 3)..] : "";
+
             var body = new StackPanel();
-            var head = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
-            head.Children.Add(new TextBlock
+            var head = new DockPanel();
+            var iconTile = new Border
             {
-                Text = "\uE8D7",
-                FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-                FontSize = 16,
-                Foreground = Brush(color),
-                Margin = new Thickness(0, 0, 10, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            head.Children.Add(new TextBlock
+                Width = 36,
+                Height = 36,
+                CornerRadius = new CornerRadius(10),
+                Background = Brush(color + "Surface"),
+                Margin = new Thickness(0, 0, 12, 0),
+                Child = new TextBlock
+                {
+                    Text = "\uEB95",
+                    FontFamily = FluentFont,
+                    FontSize = 16,
+                    Foreground = Brush(color),
+                    HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+            head.Children.Add(iconTile);
+            var names = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            names.Children.Add(new TextBlock
             {
-                Text = title,
-                FontSize = 13,
+                Text = kind.Length > 0 ? kind : owner,
+                FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush("TextMain"),
-                VerticalAlignment = VerticalAlignment.Center
+                TextTrimming = TextTrimming.CharacterEllipsis
             });
+            if (kind.Length > 0)
+                names.Children.Add(new TextBlock
+                {
+                    Text = owner,
+                    FontSize = 12,
+                    Foreground = Brush("TextMuted"),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    ToolTip = owner
+                });
+            head.Children.Add(names);
             body.Children.Add(head);
-            // Resttage immer zeigen, nicht erst ab der Warnschwelle – die Stufen 90/30/7
-            // stehen in Farbe, die Zahl selbst ist die Information.
+
+            // Resttage groß – die Zahl selbst ist die Information, die Farbe die Warnstufe.
+            var days = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 16, 0, 0) };
+            days.Children.Add(new TextBlock
+            {
+                Text = Math.Abs(daysLeft).ToString(CultureInfo.CurrentCulture),
+                FontSize = 28,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = daysLeft <= 30 ? Brush(color) : Brush("TextMain"),
+                VerticalAlignment = VerticalAlignment.Bottom
+            });
+            days.Children.Add(new TextBlock
+            {
+                Text = daysLeft < 0 ? L("Tage abgelaufen", "days expired") : L("Tage übrig", "days left"),
+                FontSize = 12,
+                Foreground = Brush("TextMuted"),
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(8, 0, 0, 6)
+            });
+            body.Children.Add(days);
+
+            var pct = Math.Clamp(daysLeft / 365.0, 0, 1);
+            var bar = new Grid { Height = 6, Margin = new Thickness(0, 8, 0, 0) };
+            bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(pct, 0.015), GridUnitType.Star) });
+            bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - Math.Max(pct, 0.015), GridUnitType.Star) });
+            var track = new Border { CornerRadius = new CornerRadius(3), Background = Brush("ChipBackground") };
+            Grid.SetColumnSpan(track, 2);
+            bar.Children.Add(track);
+            bar.Children.Add(new Border { CornerRadius = new CornerRadius(3), Background = Brush(color) });
+            body.Children.Add(bar);
+
             body.Children.Add(new TextBlock
             {
-                Text = L($"gültig bis {notAfter:dd.MM.yyyy}", $"valid until {notAfter:yyyy-MM-dd}")
-                       + (daysLeft < 0
-                           ? L($"  · abgelaufen seit {-daysLeft} Tagen", $"  · expired {-daysLeft} days ago")
-                           : L($"  · noch {daysLeft} Tage", $"  · {daysLeft} days left")),
+                Text = L($"gültig bis {notAfter:dd.MM.yyyy}", $"valid until {notAfter:yyyy-MM-dd}"),
                 FontSize = 12,
-                Foreground = daysLeft <= 30 ? Brush(color) : Brush("TextMuted"),
-                Margin = new Thickness(26, 4, 0, 6)
+                Foreground = Brush("TextMuted"),
+                Margin = new Thickness(0, 8, 0, 0)
             });
-            var barBg = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush("ChipBackground") };
-            var pct = Math.Clamp(daysLeft / 365.0, 0, 1);
-            var bar = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Brush(color), Width = Math.Max(4, 220 * pct), HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
-            barBg.Child = bar;
-            body.Children.Add(barBg);
-            tile.Child = body;
+
+            var tile = new Border
+            {
+                Style = (Style)FindResource("PanelStyle"),
+                Padding = new Thickness(18, 16, 18, 16),
+                Margin = new Thickness(0, 0, 14, 14),
+                Child = body
+            };
             CertificatesPanel.Children.Add(tile);
         }
 
@@ -1202,56 +1331,53 @@ public partial class ConnectorWindow : Window
         }
     }
 
-    /// <summary>Zeile in der Auswahlliste: Kante, Art, Name, eine winzige Herkunftszeile.</summary>
+    /// <summary>Zeile in der Auswahlliste: Symbolkachel mit Zustandspunkt, Name, Art und Herkunft.</summary>
     private UIElement CardRow(ConnectorCard card, IReadOnlyDictionary<string, ConnectorCardTerminal> terminals)
     {
         var worstPin = WorstPinState(card);
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        var edge = new Border
-        {
-            Background = AccentForState(worstPin),
-            CornerRadius = new CornerRadius(3, 0, 0, 3),
-            Margin = new Thickness(0, 2, 0, 2)
-        };
-        Grid.SetColumn(edge, 0);
-        grid.Children.Add(edge);
+        var avatar = Avatar("\uE8C7", card.IsSmcB || card.IsHba ? "StatusMaintenance" : null, 40, worstPin is null ? null : StateColorKey(worstPin));
+        grid.Children.Add(avatar);
 
-        var body = new StackPanel { Margin = new Thickness(11, 2, 0, 2) };
-        // Orientation gibt es in WPF wie in WinForms – mit UseWindowsForms laeuft sonst
-        // eine Mehrdeutigkeitspruefung, deshalb mit dem WPF-Typnamen qualifizieren.
-        var line = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
-        line.Children.Add(Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null));
-        line.Children.Add(new TextBlock
+        var body = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        body.Children.Add(new TextBlock
         {
             Text = card.IsSmcB || card.IsHba ? card.CardHolderName : card.DisplayName,
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Foreground = Brush("TextMain"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis
         });
-        body.Children.Add(line);
 
+        // Orientation gibt es in WPF wie in WinForms – mit UseWindowsForms laeuft sonst
+        // eine Mehrdeutigkeitspruefung, deshalb mit dem WPF-Typnamen qualifizieren.
         var ctLabel = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
-        var meta = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+        var meta = new DockPanel { Margin = new Thickness(0, 4, 0, 0) };
+        var kind = Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null, small: true);
+        kind.Margin = new Thickness(0, 0, 7, 0);
+        kind.VerticalAlignment = VerticalAlignment.Center;
+        meta.Children.Add(kind);
         meta.Children.Add(new TextBlock
         {
             Text = $"{ctLabel} · Slot {card.SlotId}",
             FontSize = 11,
             Foreground = Brush("TextMuted"),
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
         });
+        body.Children.Add(meta);
+
         if (!string.IsNullOrWhiteSpace(worstPin))
         {
-            var pinBadge = Badge(worstPin, StateColorKey(worstPin));
-            pinBadge.Margin = new Thickness(8, 0, 0, 0);
-            meta.Children.Add(pinBadge);
+            var pinBadge = Badge(worstPin, StateColorKey(worstPin), small: true);
+            pinBadge.Margin = new Thickness(0, 6, 0, 0);
+            pinBadge.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+            body.Children.Add(pinBadge);
         }
-        body.Children.Add(meta);
+
         var expiry = card.CertificateExpirationDate
                      ?? card.Certificates.Select(c => (DateTime?)c.NotAfter).DefaultIfEmpty().Min();
         if (expiry is DateTime until)
@@ -1259,21 +1385,176 @@ public partial class ConnectorWindow : Window
             var daysLeft = (until - DateTime.Now).TotalDays;
             var warn = _ownerMain.GetSettingsSnapshot().Connector.CertificateWarningDays;
             var color = daysLeft <= 0 ? "StatusOutage" : daysLeft <= warn ? "StatusPartial" : "StatusOk";
-            var track = new Border { Height = 4, CornerRadius = new CornerRadius(2), Background = Brush("ChipBackground"), Margin = new Thickness(0, 6, 0, 0) };
-            track.Child = new Border
-            {
-                Height = 4,
-                CornerRadius = new CornerRadius(2),
-                Background = Brush(color),
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-                Width = Math.Max(4, 140 * Math.Clamp(daysLeft / 365.0, 0, 1))
-            };
-            body.Children.Add(track);
+            var bar = ProgressBarLine(Math.Clamp(daysLeft / 365.0, 0, 1), color, 4);
+            bar.Margin = new Thickness(0, 8, 0, 0);
+            bar.ToolTip = L($"Zertifikat gültig bis {until:dd.MM.yyyy}", $"Certificate valid until {until:yyyy-MM-dd}");
+            body.Children.Add(bar);
         }
 
         Grid.SetColumn(body, 1);
         grid.Children.Add(body);
         return grid;
+    }
+
+    /// <summary>
+    /// Runde Symbolkachel. Mit <paramref name="dotKey"/> sitzt unten rechts ein Zustandspunkt –
+    /// so steht der Zustand an der Kachel, ohne eine eigene Spalte zu kosten.
+    /// </summary>
+    private FrameworkElement Avatar(string glyph, string? toneKey, double size, string? dotKey = null)
+    {
+        var host = new Grid { Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center };
+        host.Children.Add(new Border
+        {
+            CornerRadius = new CornerRadius(size * 0.3),
+            Background = toneKey is null ? Brush("ChipBackground") : Brush(toneKey + "Surface"),
+            BorderBrush = toneKey is null ? Brush("BorderSubtle") : Brush(toneKey + "Border"),
+            BorderThickness = new Thickness(1),
+            Child = new TextBlock
+            {
+                Text = glyph,
+                FontFamily = FluentFont,
+                FontSize = size * 0.42,
+                Foreground = toneKey is null ? Brush("TextMuted") : Brush(toneKey),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        });
+        if (dotKey is not null && dotKey != "TextMuted")
+        {
+            var dot = size * 0.3;
+            host.Children.Add(new Border
+            {
+                Width = dot,
+                Height = dot,
+                CornerRadius = new CornerRadius(dot / 2),
+                Background = Brush(dotKey),
+                BorderBrush = Brush("CardBackground"),
+                BorderThickness = new Thickness(2),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, -3, -3)
+            });
+        }
+        return host;
+    }
+
+    /// <summary>Schmaler Fortschrittsbalken, der sich der verfuegbaren Breite anpasst.</summary>
+    private Grid ProgressBarLine(double fraction, string colorKey, double height)
+    {
+        var f = Math.Clamp(fraction, 0.015, 1);
+        var bar = new Grid { Height = height };
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(f, GridUnitType.Star) });
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - f + 0.0001, GridUnitType.Star) });
+        var track = new Border { CornerRadius = new CornerRadius(height / 2), Background = Brush("ChipBackground") };
+        Grid.SetColumnSpan(track, 2);
+        bar.Children.Add(track);
+        bar.Children.Add(new Border { CornerRadius = new CornerRadius(height / 2), Background = Brush(colorKey) });
+        return bar;
+    }
+
+    /// <summary>Kopf der Detailansicht: grosse Symbolkachel, Titel, Unterzeile, rechts der Zustand.</summary>
+    private UIElement DetailHeader(string glyph, string? toneKey, string title, string? subtitle, IEnumerable<FrameworkElement> badges, FrameworkElement? state)
+    {
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        header.Children.Add(Avatar(glyph, toneKey, 56));
+
+        var text = new StackPanel { Margin = new Thickness(16, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+        var badgeRow = new WrapPanel();
+        foreach (var b in badges)
+        {
+            b.Margin = new Thickness(0, 0, 6, 4);
+            badgeRow.Children.Add(b);
+        }
+        if (badgeRow.Children.Count > 0)
+            text.Children.Add(badgeRow);
+        text.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMain"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            ToolTip = title
+        });
+        if (!string.IsNullOrWhiteSpace(subtitle))
+            text.Children.Add(new TextBlock
+            {
+                Text = subtitle,
+                FontSize = 12,
+                Foreground = Brush("TextMuted"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 3, 0, 0)
+            });
+        Grid.SetColumn(text, 1);
+        header.Children.Add(text);
+
+        if (state is not null)
+        {
+            state.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(state, 2);
+            header.Children.Add(state);
+        }
+        return header;
+    }
+
+    /// <summary>Zwischenueberschrift in der Detailansicht.</summary>
+    private TextBlock DetailCaption(string text) => new()
+    {
+        Text = text,
+        FontSize = 12,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = Brush("TextMuted"),
+        Margin = new Thickness(0, 22, 0, 10)
+    };
+
+    /// <summary>Eigenschafts-Kachel: Bezeichnung klein, Wert darunter, optional farbig.</summary>
+    private Border PropertyTile(string label, string value, string? colorKey = null)
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextMuted"),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = value,
+            FontSize = 13,
+            Foreground = Brush(colorKey ?? "TextMain"),
+            FontWeight = colorKey is null ? FontWeights.Normal : FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 3, 0, 0)
+        });
+        return new Border { Child = panel, Style = (Style)FindResource("ChipStyle") };
+    }
+
+    /// <summary>Umrandeter Block mit Zeilen und Trennlinien – fuer PIN- und Kartenlisten.</summary>
+    private Border RowGroup(IEnumerable<UIElement> rows)
+    {
+        var stack = new StackPanel();
+        var first = true;
+        foreach (var row in rows)
+        {
+            if (!first)
+                stack.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle") });
+            first = false;
+            stack.Children.Add(new Border { Child = row, Padding = new Thickness(16, 12, 16, 12) });
+        }
+        return new Border
+        {
+            Child = stack,
+            BorderBrush = Brush("BorderSubtle"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Background = Brush("CardBackground")
+        };
     }
 
     private void CardsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1302,99 +1583,84 @@ public partial class ConnectorWindow : Window
             return;
         }
 
-        // Kopfzeile: Art-Abzeichen, Name, rechts der grobe Zustand. Ein Blick, keine Textwand.
-        var header = new Grid();
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var badge = Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null);
-        badge.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(badge, 0);
-        header.Children.Add(badge);
-
-        var title = new TextBlock
-        {
-            Text = card.CardHolderName.Length > 0 ? card.CardHolderName : card.DisplayName,
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush("TextMain"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(10, 0, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        Grid.SetColumn(title, 1);
-        header.Children.Add(title);
-
+        var terminalName = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
         var worstPin = WorstPinState(card);
-        if (worstPin is not null)
-        {
-            var stateBadge = Badge(worstPin, StateColorKey(worstPin));
-            stateBadge.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(stateBadge, 2);
-            header.Children.Add(stateBadge);
-        }
-        CardDetailPanel.Children.Add(header);
 
-        var ctLabel = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
-        var details = new List<string>
-        {
-            $"{L("Terminal", "Terminal")}: {ctLabel} · Slot {card.SlotId}",
-        };
-        if (!string.IsNullOrWhiteSpace(card.Iccsn)) details.Add($"ICCSN: {card.Iccsn}");
-        if (!string.IsNullOrWhiteSpace(card.CardVersion)) details.Add($"COS: {card.CardVersion}");
-        if (card.InsertTime is { } inserted) details.Add(L($"gesteckt seit {inserted:dd.MM.yyyy HH:mm}", $"inserted {inserted:yyyy-MM-dd HH:mm}"));
-        if (card.IsEgk && !string.IsNullOrWhiteSpace(card.Kvnr)) details.Add($"KVNR: {card.Kvnr}");
+        // Kopf: Kachel, Art, Name, rechts der grobe Zustand. Ein Blick, keine Textwand.
+        CardDetailPanel.Children.Add(DetailHeader(
+            "\uE8C7",
+            card.IsSmcB || card.IsHba ? "StatusMaintenance" : null,
+            card.CardHolderName.Length > 0 ? card.CardHolderName : card.DisplayName,
+            $"{terminalName} · Slot {card.SlotId}",
+            [Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null, small: true)],
+            worstPin is null ? null : Badge(worstPin, StateColorKey(worstPin))));
+
+        var props = new List<(string Label, string Value, string? Color)>();
+        if (!string.IsNullOrWhiteSpace(card.Iccsn)) props.Add(("ICCSN", card.Iccsn, null));
+        if (!string.IsNullOrWhiteSpace(card.CardVersion)) props.Add(("COS", card.CardVersion, null));
+        if (card.InsertTime is { } inserted) props.Add((L("Gesteckt seit", "Inserted"), inserted.ToString(L("dd.MM.yyyy HH:mm", "yyyy-MM-dd HH:mm"), LocalizationService.DisplayCulture), null));
+        if (card.IsEgk && !string.IsNullOrWhiteSpace(card.Kvnr)) props.Add(("KVNR", card.Kvnr, null));
 
         var cert = card.AuthCertificate;
         // Alle gelesenen Refs (C.AUT/C.ENC/C.SIG/C.QES) nebeneinander – so faellt ein
         // abgelaufenes QES sofort auf, auch wenn C.AUT noch monatelang gueltig ist.
+        var certProps = new List<(string Label, string Value, string? Color)>();
         if (card.Certificates.Count > 0)
         {
             foreach (var c in card.Certificates.OrderBy(c => c.CertRef, StringComparer.Ordinal))
             {
                 var days = (int)Math.Floor((c.NotAfter - DateTime.Now).TotalDays);
                 var label = ConnectorProtocol.KnownCertRefs.FirstOrDefault(k => k.Ref == c.CertRef).Label;
-                details.Add(L($"{c.CertRef} bis {c.NotAfter:dd.MM.yyyy} ({days} Tage)", $"{c.CertRef} until {c.NotAfter:yyyy-MM-dd} ({days} days)"));
+                var value = L($"bis {c.NotAfter:dd.MM.yyyy} · {days} Tage", $"until {c.NotAfter:yyyy-MM-dd} · {days} days");
                 if (!string.IsNullOrWhiteSpace(label) && days <= 0)
-                    details.Add(label);
+                    value += "\n" + label;
+                var color = ConnectorCertificateExpiry.BrushKeyFor(days);
+                certProps.Add((c.CertRef, value, color == "StatusOk" ? null : color));
             }
         }
         else if (card.EarliestCertificateExpiry is { } notAfter)
         {
             var days = (int)Math.Floor((notAfter - DateTime.Now).TotalDays);
-            details.Add(L($"Zertifikat gültig bis {notAfter:dd.MM.yyyy} ({days} Tage)", $"Certificate valid until {notAfter:yyyy-MM-dd} ({days} days)"));
+            var color = ConnectorCertificateExpiry.BrushKeyFor(days);
+            certProps.Add((L("Zertifikat", "Certificate"),
+                L($"bis {notAfter:dd.MM.yyyy} · {days} Tage", $"until {notAfter:yyyy-MM-dd} · {days} days"),
+                color == "StatusOk" ? null : color));
         }
-        if (!string.IsNullOrWhiteSpace(cert?.TelematikId)) details.Add($"Telematik-ID: {cert!.TelematikId}");
-        if (!string.IsNullOrWhiteSpace(cert?.Profession)) details.Add(L("Rolle", "Role") + $": {cert!.Profession}");
-        if (!string.IsNullOrWhiteSpace(cert?.Organization) && cert!.Organization != card.CardHolderName) details.Add(L("Organisation", "Organization") + $": {cert.Organization}");
-        if (cert is not null) details.Add($"{cert.CertRef} · {cert.KeyAlgorithm} · {L("Aussteller", "Issuer")} {cert.Issuer}");
-
-        // Kennzahlen als Kapseln statt Textwand – dieselbe Handschrift wie im Banner.
-        var metaRow = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
-        foreach (var part in details)
-            metaRow.Children.Add(Chip(part, null));
-        CardDetailPanel.Children.Add(metaRow);
-
-        CardDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12, 0, 12) });
-
-        var pinTitle = new TextBlock
+        if (!string.IsNullOrWhiteSpace(cert?.TelematikId)) props.Add(("Telematik-ID", cert!.TelematikId, null));
+        if (!string.IsNullOrWhiteSpace(cert?.Profession)) props.Add((L("Rolle", "Role"), cert!.Profession, null));
+        if (!string.IsNullOrWhiteSpace(cert?.Organization) && cert!.Organization != card.CardHolderName) props.Add((L("Organisation", "Organization"), cert.Organization, null));
+        if (cert is not null)
         {
-            Text = L("PIN-Zustand", "PIN state"),
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush("TextMuted"),
-            Margin = new Thickness(0, 0, 0, 6)
-        };
-        CardDetailPanel.Children.Add(pinTitle);
-
-        // PIN-Zeilen als schmale Tabellenzeilen, damit die Buttons nicht umbiegen.
-        foreach (var pinType in card.PinTypes)
-        {
-            var state = card.PinStates.FirstOrDefault(p => p.PinType == pinType);
-            CardDetailPanel.Children.Add(BuildPinRow(card, pinType, state));
+            props.Add((L("Schlüssel", "Key"), $"{cert.CertRef} · {cert.KeyAlgorithm}", null));
+            props.Add((L("Aussteller", "Issuer"), cert.Issuer, null));
         }
-        if (card.PinTypes.Count == 0)
+
+        if (props.Count > 0)
+        {
+            CardDetailPanel.Children.Add(DetailCaption(L("Eigenschaften", "Properties")));
+            var grid = new WrapPanel { ItemWidth = 232, Margin = new Thickness(0, 0, -10, -10) };
+            foreach (var (label, value, color) in props)
+                grid.Children.Add(PropertyTile(label, value, color));
+            CardDetailPanel.Children.Add(grid);
+        }
+        if (certProps.Count > 0)
+        {
+            CardDetailPanel.Children.Add(DetailCaption(L("Zertifikate", "Certificates")));
+            var grid = new WrapPanel { ItemWidth = 232, Margin = new Thickness(0, 0, -10, -10) };
+            foreach (var (label, value, color) in certProps)
+                grid.Children.Add(PropertyTile(label, value, color));
+            CardDetailPanel.Children.Add(grid);
+        }
+
+        CardDetailPanel.Children.Add(DetailCaption(L("PIN-Zustand", "PIN state")));
+
+        // PIN-Zeilen als Tabellenzeilen in einem Block, damit die Buttons nicht umbiegen.
+        if (card.PinTypes.Count > 0)
+        {
+            CardDetailPanel.Children.Add(RowGroup(card.PinTypes.Select(pinType =>
+                BuildPinRow(card, pinType, card.PinStates.FirstOrDefault(p => p.PinType == pinType)))));
+        }
+        else
             CardDetailPanel.Children.Add(new TextBlock
             {
                 Text = L("Diese Karte fuehrt keine PIN-Verwaltung ueber den Konnektor.", "This card has no PIN management via the connector."),
@@ -1404,23 +1670,34 @@ public partial class ConnectorWindow : Window
 
         if (card.SupportsPinManagement)
         {
-            var actions = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
+            CardDetailPanel.Children.Add(DetailCaption(L("Aktionen", "Actions")));
+            var actions = new WrapPanel();
             if (cert is not null)
-                actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card)));
-            actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card)));
-            actions.Children.Add(ActionButton(L("PIN-Status neu lesen", "Re-read PIN status"), async () => await RefreshPinStatusAsync(card)));
+                actions.Children.Add(ActionButton(L("Zertifikat online prüfen (OCSP)", "Verify certificate online (OCSP)"), async () => await VerifyCertificateAsync(card), "\uE9D5"));
+            actions.Children.Add(ActionButton(L("Alle Zertifikate lesen", "Read all certificates"), async () => await ReadAllCertificatesAsync(card), "\uEB95"));
+            actions.Children.Add(ActionButton(L("PIN-Status neu lesen", "Re-read PIN status"), async () => await RefreshPinStatusAsync(card), "\uE72C"));
             CardDetailPanel.Children.Add(actions);
         }
 
-        CardDetailPanel.Children.Add(new TextBlock
+        var note = new DockPanel { Margin = new Thickness(0, 20, 0, 0) };
+        note.Children.Add(new TextBlock
+        {
+            Text = "\uE72E",
+            FontFamily = FluentFont,
+            FontSize = 12,
+            Foreground = Brush("TextMuted"),
+            Margin = new Thickness(0, 1, 8, 0),
+            VerticalAlignment = VerticalAlignment.Top
+        });
+        note.Children.Add(new TextBlock
         {
             Text = L("PIN-Eingaben erfolgen ausschließlich am Kartenterminal – die App sieht keine PIN oder PUK.",
                      "PIN entry happens exclusively at the card terminal – the app never sees a PIN or PUK."),
             FontSize = 11,
             Foreground = Brush("TextMuted"),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 14, 0, 0)
+            TextWrapping = TextWrapping.Wrap
         });
+        CardDetailPanel.Children.Add(note);
     }
 
     /// <summary>Farbe der Linkskante, passend zum grobsten PIN-Zustand der Karte.</summary>
@@ -1461,12 +1738,15 @@ public partial class ConnectorWindow : Window
     }
 
     /// <summary>Kleines farbiges Abzeichen – flach, ohne Schatten, nur Rand und Text.</summary>
-    private Border Badge(string text, string? colorKey)
+    private Border Badge(string text, string? colorKey, bool small = false)
     {
+        // TextMuted hat keine Flaechen-/Randvariante – wie "neutral" behandeln.
+        if (colorKey == "TextMuted")
+            colorKey = null;
         var label = new TextBlock
         {
             Text = text,
-            FontSize = 11,
+            FontSize = small ? 10.5 : 12,
             FontWeight = FontWeights.SemiBold,
             Foreground = Brush(colorKey ?? "TextMuted"),
             TextWrapping = TextWrapping.Wrap
@@ -1478,14 +1758,14 @@ public partial class ConnectorWindow : Window
             BorderBrush = colorKey is null ? Brush("BorderSubtle") : Brush(colorKey + "Border"),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(999),
-            Padding = new Thickness(9, 3, 9, 3)
+            Padding = small ? new Thickness(7, 1, 7, 2) : new Thickness(11, 4, 11, 5)
         };
     }
 
     private UIElement BuildPinRow(ConnectorCard card, string pinType, ConnectorPinState? state)
     {
-        var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) });
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1512,26 +1792,30 @@ public partial class ConnectorWindow : Window
             color = state.IsVerified ? "StatusOk" : state.IsBlocked ? "StatusOutage" : "StatusPartial";
         }
 
-        var name = new TextBlock
+        var name = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        name.Children.Add(new TextBlock
+        {
+            Text = "\uE8D7",
+            FontFamily = FluentFont,
+            FontSize = 13,
+            Foreground = Brush("TextMuted"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        });
+        name.Children.Add(new TextBlock
         {
             Text = pinType,
-            FontSize = 12,
+            FontSize = 13,
             FontWeight = FontWeights.SemiBold,
-            Foreground = Brush("TextMuted"),
+            Foreground = Brush("TextMain"),
             VerticalAlignment = VerticalAlignment.Center
-        };
+        });
         Grid.SetColumn(name, 0);
         row.Children.Add(name);
 
-        var status = new TextBlock
-        {
-            Text = statusText,
-            FontSize = 12,
-            Foreground = Brush(color),
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.Wrap
-        };
+        var status = Badge(statusText, color);
+        status.VerticalAlignment = VerticalAlignment.Center;
+        status.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
         if (state?.Error is { Length: > 0 } error)
         {
             // Der lange Konnektor-Text – inklusive XML – gehoert nicht in die Maske. Er bleibt
@@ -1547,7 +1831,7 @@ public partial class ConnectorWindow : Window
 
         // Im Objekth initializer faellt der Name rechts auf die Instanz-Eigenschaft zurueck – mit
         // Typnamen qualifizieren, sonst greift CS0176.
-        var buttons = new WrapPanel { HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
+        var buttons = new WrapPanel { HorizontalAlignment = System.Windows.HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
         // PIN-Verwaltung veraendert die Karte – nur, wenn sie in den Einstellungen ausdruecklich
         // erlaubt ist (Standard: aus). Sonst ein kurzer Hinweis statt der Knoepfe.
         if (!_ownerMain.GetSettingsSnapshot().Connector.AllowPinManagement)
@@ -1631,60 +1915,49 @@ public partial class ConnectorWindow : Window
         }
     }
 
-    /// <summary>Zeile in der Auswahlliste: Kante in Verbindungsfarbe, Name, eine Herkunftszeile.</summary>
+    /// <summary>Zeile in der Auswahlliste: Symbolkachel in Verbindungsfarbe, Name, Herkunft.</summary>
     private UIElement TerminalRow(ConnectorCardTerminal t, ConnectorSnapshot snapshot)
     {
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        var edge = new Border
-        {
-            Background = Brush(t.Connected == false ? "StatusPartial" : "StatusOk"),
-            CornerRadius = new CornerRadius(3, 0, 0, 3),
-            Margin = new Thickness(0, 2, 0, 2)
-        };
-        Grid.SetColumn(edge, 0);
-        grid.Children.Add(edge);
+        var avatar = Avatar("\uE7F4", null, 40, TerminalStateKey(t));
+        avatar.ToolTip = t.Connected == false ? L("offline", "offline") : t.Connected == true ? L("online", "online") : L("unbekannt", "unknown");
+        grid.Children.Add(avatar);
 
-        var body = new StackPanel { Margin = new Thickness(11, 2, 0, 2) };
-        var title = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
-        title.Children.Add(new Border
-        {
-            Width = 9,
-            Height = 9,
-            CornerRadius = new CornerRadius(5),
-            Background = Brush(t.Connected == false ? "StatusOutage" : t.Connected == true ? "StatusOk" : "StatusEmpty"),
-            Margin = new Thickness(0, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            ToolTip = t.Connected == false ? L("offline", "offline") : t.Connected == true ? L("online", "online") : L("unbekannt", "unknown")
-        });
-        title.Children.Add(new TextBlock
+        var body = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        body.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(t.Name) ? t.CtId : t.Name,
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Foreground = Brush("TextMain"),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center
+            TextTrimming = TextTrimming.CharacterEllipsis
         });
-        body.Children.Add(title);
         var under = new List<string> { t.CtId };
         if (!string.IsNullOrWhiteSpace(t.IpAddress)) under.Add(t.IpAddress);
-        var here = snapshot.Cards.Count(c => string.Equals(c.CtId, t.CtId, StringComparison.OrdinalIgnoreCase));
-        under.Add(L($"{here} Karten", $"{here} cards"));
         body.Children.Add(new TextBlock
         {
             Text = string.Join(" · ", under),
             FontSize = 11,
             Foreground = Brush("TextMuted"),
-            Margin = new Thickness(0, 2, 0, 0)
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 3, 0, 0)
         });
+        var here = snapshot.Cards.Count(c => string.Equals(c.CtId, t.CtId, StringComparison.OrdinalIgnoreCase));
+        var count = Badge(L($"{here} Karten", $"{here} cards"), here > 0 ? "StatusMaintenance" : null, small: true);
+        count.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+        count.Margin = new Thickness(0, 6, 0, 0);
+        body.Children.Add(count);
 
         Grid.SetColumn(body, 1);
         grid.Children.Add(body);
         return grid;
     }
+
+    private static string TerminalStateKey(ConnectorCardTerminal t) =>
+        t.Connected == false ? "StatusOutage" : t.Connected == true ? "StatusOk" : "StatusEmpty";
 
     private void TerminalsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -1717,91 +1990,81 @@ public partial class ConnectorWindow : Window
             null => L("Status unbekannt", "status unknown")
         };
 
-        var header = new Grid();
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var title = new TextBlock
-        {
-            Text = t.Label,
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush("TextMain"),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        Grid.SetColumn(title, 0);
-        header.Children.Add(title);
-        var stateBadge = Badge(state, t.Connected == false ? "StatusPartial" : "StatusOk");
-        stateBadge.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(stateBadge, 1);
-        header.Children.Add(stateBadge);
-        TerminalDetailPanel.Children.Add(header);
+        TerminalDetailPanel.Children.Add(DetailHeader(
+            "\uE7F4",
+            t.Connected == false ? "StatusOutage" : t.Connected == true ? "StatusOk" : null,
+            t.Label,
+            t.CtId,
+            [],
+            Badge(state, t.Connected == false ? "StatusPartial" : "StatusOk")));
 
-        // Technische Werte als Kapseln – dieselbe Handschrift wie bei der Karte.
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(t.IpAddress)) parts.Add($"IP {t.IpAddress}");
-        if (!string.IsNullOrWhiteSpace(t.MacAddress)) parts.Add($"MAC {t.MacAddress}");
-        if (t.Slots is { } slots) parts.Add($"{slots} Slots");
-        if (t.IsPhysical == false) parts.Add(L("virtuell", "virtual"));
-        if (!string.IsNullOrWhiteSpace(t.Details)) parts.Add(t.Details);
+        // Technische Werte als Kacheln – dieselbe Handschrift wie bei der Karte.
+        var props = new List<(string Label, string Value)>();
+        if (!string.IsNullOrWhiteSpace(t.IpAddress)) props.Add(("IP", t.IpAddress));
+        if (!string.IsNullOrWhiteSpace(t.MacAddress)) props.Add(("MAC", t.MacAddress));
+        if (t.Slots is { } slots) props.Add(("Slots", slots.ToString(CultureInfo.CurrentCulture)));
+        if (t.IsPhysical is { } physical) props.Add((L("Bauart", "Type"), physical ? L("physisch", "physical") : L("virtuell", "virtual")));
+        if (!string.IsNullOrWhiteSpace(t.Details)) props.Add((L("Details", "Details"), t.Details));
         if (t.Workplaces.Count > 0)
-            parts.Add(L("Arbeitsplaetze: ", "Workplaces: ") + string.Join(", ", t.Workplaces));
+            props.Add((L("Arbeitsplätze", "Workplaces"), string.Join(", ", t.Workplaces)));
 
-        if (parts.Count > 0)
+        if (props.Count > 0)
         {
-            var chips = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
-            foreach (var part in parts)
-                chips.Children.Add(Chip(part, null));
-            TerminalDetailPanel.Children.Add(chips);
+            TerminalDetailPanel.Children.Add(DetailCaption(L("Eigenschaften", "Properties")));
+            var grid = new WrapPanel { ItemWidth = 232, Margin = new Thickness(0, 0, -10, -10) };
+            foreach (var (label, value) in props)
+                grid.Children.Add(PropertyTile(label, value));
+            TerminalDetailPanel.Children.Add(grid);
         }
 
-        TerminalDetailPanel.Children.Add(new Border { Height = 1, Background = Brush("BorderSubtle"), Margin = new Thickness(0, 12, 0, 12) });
-
-        var cardTitle = new TextBlock
-        {
-            Text = L("Gesteckte Karten", "Inserted cards"),
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush("TextMuted"),
-            Margin = new Thickness(0, 0, 0, 6)
-        };
-        TerminalDetailPanel.Children.Add(cardTitle);
+        TerminalDetailPanel.Children.Add(DetailCaption(L("Gesteckte Karten", "Inserted cards")));
 
         if (cards.Count == 0)
         {
-            TerminalDetailPanel.Children.Add(new TextBlock
+            TerminalDetailPanel.Children.Add(new Border
             {
-                Text = L("In diesem Terminal steckt keine Karte.", "No card is inserted in this terminal."),
-                FontSize = 12,
-                Foreground = Brush("TextMuted")
+                Background = Brush("ChipBackground"),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(16, 14, 16, 14),
+                Child = new TextBlock
+                {
+                    Text = L("In diesem Terminal steckt keine Karte.", "No card is inserted in this terminal."),
+                    FontSize = 12,
+                    Foreground = Brush("TextMuted")
+                }
             });
             return;
         }
 
+        var rows = new List<UIElement>();
         foreach (var card in CardOrder(cards))
         {
             var worstPin = WorstPinState(card);
-            var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+            var row = new Grid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var badge = Badge(KindOf(card), card.IsSmcB || card.IsHba ? "StatusMaintenance" : null);
-            badge.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(badge, 0);
-            row.Children.Add(badge);
+            row.Children.Add(Avatar("\uE8C7", card.IsSmcB || card.IsHba ? "StatusMaintenance" : null, 32));
 
-            var name = new TextBlock
+            var text = new StackPanel { Margin = new Thickness(12, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock
             {
-                Text = $"Slot {card.SlotId} · {card.DisplayName}",
+                Text = card.DisplayName,
                 FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
                 Foreground = Brush("TextMain"),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(10, 0, 0, 0),
                 TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            Grid.SetColumn(name, 1);
-            row.Children.Add(name);
+            });
+            text.Children.Add(new TextBlock
+            {
+                Text = $"{KindOf(card)} · Slot {card.SlotId}",
+                FontSize = 11,
+                Foreground = Brush("TextMuted"),
+                Margin = new Thickness(0, 2, 0, 0)
+            });
+            Grid.SetColumn(text, 1);
+            row.Children.Add(text);
 
             if (worstPin is not null)
             {
@@ -1810,38 +2073,41 @@ public partial class ConnectorWindow : Window
                 Grid.SetColumn(pinBadge, 2);
                 row.Children.Add(pinBadge);
             }
-            TerminalDetailPanel.Children.Add(row);
+            rows.Add(row);
         }
+        TerminalDetailPanel.Children.Add(RowGroup(rows));
     }
 
     private void RenderServices(ConnectorSnapshot snapshot)
     {
         ServicesPanel.Children.Clear();
         var services = snapshot.Directory?.Services ?? [];
+        var odd = false;
         foreach (var group in services.GroupBy(s => s.Name).OrderBy(g => g.Key))
         {
-            // Zwei Spalten: links Name und Version, rechts die Endpunkte. Die fruehere Bauart
-            // schrieb die Version mitten in die Kopfzeile und die Endpunkte darunter – dadurch
-            // liess sich nicht erkennen, welche Version zu welchem Pfad gehoert.
-            var row = new Grid { Margin = new Thickness(0, 0, 0, 9) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
+            // Zwei Spalten: links Name und Version, rechts die Endpunkte – als Tabellenzeile
+            // mit wechselndem Hintergrund, damit lange Listen lesbar bleiben.
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            var head = new StackPanel();
+            var head = new StackPanel { Margin = new Thickness(0, 0, 12, 0) };
             head.Children.Add(new TextBlock
             {
                 Text = group.Key,
                 Foreground = Brush("TextMain"),
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis
             });
-            head.Children.Add(new TextBlock
+            var versions = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+            foreach (var version in group.Select(s => s.Version).Distinct())
             {
-                Text = string.Join(", ", group.Select(s => s.Version).Distinct()),
-                Foreground = Brush("TextMuted"),
-                FontSize = 11,
-                Margin = new Thickness(0, 1, 0, 0)
-            });
+                var v = Badge("v" + version, null, small: true);
+                v.Margin = new Thickness(0, 0, 4, 2);
+                versions.Children.Add(v);
+            }
+            head.Children.Add(versions);
             Grid.SetColumn(head, 0);
             row.Children.Add(head);
 
@@ -1849,25 +2115,49 @@ public partial class ConnectorWindow : Window
             {
                 Text = string.Join("\n", group.Select(s => s.Endpoint).Distinct()),
                 Foreground = Brush("TextMuted"),
-                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap
+                FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono, Consolas"),
+                FontSize = 11.5,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
             };
             Grid.SetColumn(paths, 1);
             row.Children.Add(paths);
 
-            ServicesPanel.Children.Add(row);
+            ServicesPanel.Children.Add(new Border
+            {
+                Child = row,
+                Background = odd ? Brush("ChipBackground") : System.Windows.Media.Brushes.Transparent,
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(14, 10, 14, 10)
+            });
+            odd = !odd;
         }
         ServicesCard.Visibility = services.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private System.Windows.Controls.Button ActionButton(string text, Func<Task> action)
+    private System.Windows.Controls.Button ActionButton(string text, Func<Task> action, string? glyph = null)
     {
+        object content = text;
+        if (glyph is not null)
+        {
+            var panel = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            panel.Children.Add(new TextBlock
+            {
+                Text = glyph,
+                FontFamily = FluentFont,
+                FontSize = 13,
+                Foreground = Brush("ButtonForeground"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            });
+            panel.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+            content = panel;
+        }
         var button = new System.Windows.Controls.Button
         {
-            Content = text,
-            Padding = new Thickness(10, 4, 10, 4),
-            Margin = new Thickness(0, 2, 8, 2),
+            Content = content,
+            Padding = glyph is null ? new Thickness(12, 6, 12, 6) : new Thickness(14, 8, 14, 8),
+            Margin = new Thickness(0, 2, 8, 6),
             FontSize = 12
         };
         button.Click += async (_, _) =>
