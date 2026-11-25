@@ -29,6 +29,7 @@ public partial class ConnectorWindow : Window
             // Das Abonnement haelt das Fenster ueber den Monitor lebendig, und der Rueckruf
             // wuerde nach dem Schliessen in eine verworfene Maske zeichnen.
             _ownerMain.ConnectorMonitor.Updated -= OnMonitorUpdated;
+            HomeAssistantPublisher.Updated -= OnHomeAssistantUpdated;
             try { _cts?.Cancel(); _cts?.Dispose(); _cts = null; } catch { /* ignore */ }
             _presenceTimer?.Stop();
         };
@@ -48,7 +49,6 @@ public partial class ConnectorWindow : Window
             var settings = owner.GetSettingsSnapshot().Connector;
             if (settings.Enabled && settings.IsConfigured)
             {
-                ConnectionExpander.IsExpanded = false;
                 // Ein Scheitern fuehrt hier zu denselben Einstellungen wie der Knopf – nur ohne
                 // Dialog. Auf der Uebersicht steht dann nichts, und der Nutzer muss den Umweg
                 // erst finden. Steht aus dem Hintergrundpollen schon ein Stand, bleibt die
@@ -72,6 +72,92 @@ public partial class ConnectorWindow : Window
         // Maske zeigte denselben Stand, bis man selbst aktualisierte, waehrend der Knopf im
         // Hauptfenster laengst umgesprungen war. Dasselbe Bild, nur ohne eigenen Abruf.
         _ownerMain.ConnectorMonitor.Updated += OnMonitorUpdated;
+        HomeAssistantPublisher.Updated += OnHomeAssistantUpdated;
+        RenderHomeAssistantStatus();
+    }
+
+    // =================================================================
+    // Home Assistant
+    // =================================================================
+
+    private void OnHomeAssistantUpdated() => Dispatcher.BeginInvoke(RenderHomeAssistantStatus);
+
+    private void RenderHomeAssistantStatus()
+    {
+        var enabled = HaEnabledToggle.IsChecked == true;
+        string key;
+        string text;
+        if (HomeAssistantPublisher.LastError is { } error)
+        {
+            key = "StatusOutage";
+            text = error;
+        }
+        else if (HomeAssistantPublisher.LastSuccess is { } at)
+        {
+            key = "StatusOk";
+            text = L($"{HomeAssistantPublisher.LastCount} Sensoren gesendet um {at:HH:mm:ss} Uhr.",
+                $"{HomeAssistantPublisher.LastCount} sensors sent at {at:HH:mm:ss}.");
+        }
+        else
+        {
+            key = "StatusEmpty";
+            text = enabled
+                ? L("Wird beim nächsten Abruf gesendet.", "Will be sent with the next poll.")
+                : L("Aus. Einschalten, Adresse und Token eintragen, dann „Speichern & verbinden“.",
+                    "Off. Switch on, enter address and token, then save.");
+        }
+        HaStatusDot.Fill = Brush(key);
+        HaStatusText.Text = text;
+    }
+
+    private void HaNameBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => UpdateHaPreview();
+
+    private void UpdateHaPreview()
+    {
+        if (HaEntityPreview is null)
+            return;
+        var settings = _ownerMain.GetSettingsSnapshot().Connector.Clone();
+        settings.HomeAssistantName = HaNameBox.Text;
+        var name = ConnectorMonitor.HomeAssistantName(settings, _snapshot ?? _ownerMain.ConnectorMonitor.LastSnapshot);
+        var slug = HomeAssistantStates.Slug(name);
+        HaEntityPreview.Text = $"binary_sensor.{HomeAssistantStates.Prefix}_{slug}_erreichbar\n" +
+                               $"binary_sensor.{HomeAssistantStates.Prefix}_{slug}_vpn_ti\n" +
+                               $"sensor.{HomeAssistantStates.Prefix}_{slug}_smcb_…_ablauf";
+    }
+
+    private async void HaTest_Click(object sender, RoutedEventArgs e)
+    {
+        var url = HaUrlBox.Text.Trim();
+        var token = HaTokenBox.Password.Length > 0
+            ? HaTokenBox.Password
+            : SafeUnprotect(_ownerMain.GetSettingsSnapshot().Connector.HomeAssistantTokenProtected);
+        if (url.Length == 0 || token.Length == 0)
+        {
+            HaStatusDot.Fill = Brush("StatusPartial");
+            HaStatusText.Text = L("Bitte Adresse und Token eintragen.", "Please enter address and token.");
+            return;
+        }
+        HaTestButton.IsEnabled = false;
+        HaStatusDot.Fill = Brush("StatusEmpty");
+        HaStatusText.Text = L("Prüfe …", "Checking …");
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var error = await HomeAssistantPublisher.TestAsync(url, token, cts.Token);
+            HaStatusDot.Fill = Brush(error is null ? "StatusOk" : "StatusOutage");
+            HaStatusText.Text = error ?? L("Verbindung zu Home Assistant steht. Speichern, damit gesendet wird.",
+                "Connected to Home Assistant. Save to start sending.");
+        }
+        finally
+        {
+            HaTestButton.IsEnabled = true;
+        }
+    }
+
+    private static string SafeUnprotect(string? value)
+    {
+        try { return SecretProtector.Unprotect(value); }
+        catch (SecretProtectorException) { return ""; }
     }
 
     /// <summary>Zeichnet den Stand der Hintergrundueberwachung nach, ohne selbst abzurufen.</summary>
@@ -230,6 +316,11 @@ public partial class ConnectorWindow : Window
         CertPasswordHint.Text = string.IsNullOrEmpty(s.ClientCertificatePasswordProtected) ? "" : L("gespeichert", "saved");
         UpdatePinnedText(s.PinnedServerThumbprint);
         UpdateClientCertInfo(s);
+        HaEnabledToggle.IsChecked = s.HomeAssistantEnabled;
+        HaUrlBox.Text = s.HomeAssistantUrl;
+        HaNameBox.Text = s.HomeAssistantName;
+        HaTokenHint.Text = string.IsNullOrEmpty(s.HomeAssistantTokenProtected) ? "" : L("gespeichert", "saved");
+        UpdateHaPreview();
     }
 
     private ConnectorSettings ReadForm()
@@ -257,6 +348,11 @@ public partial class ConnectorWindow : Window
             current.ClientCertificatePasswordProtected = SecretProtector.Protect(CertPasswordBox.Password);
         else if (ClearCertPasswordToggle.IsChecked == true)
             current.ClientCertificatePasswordProtected = null;
+        current.HomeAssistantEnabled = HaEnabledToggle.IsChecked == true;
+        current.HomeAssistantUrl = HaUrlBox.Text.Trim();
+        current.HomeAssistantName = HaNameBox.Text.Trim();
+        if (HaTokenBox.Password.Length > 0)
+            current.HomeAssistantTokenProtected = SecretProtector.Protect(HaTokenBox.Password.Trim());
         if (BasicPasswordBox.Password.Length > 0)
             current.BasicAuthPasswordProtected = SecretProtector.Protect(BasicPasswordBox.Password);
         else if (ClearBasicPasswordToggle.IsChecked == true)
@@ -393,7 +489,6 @@ public partial class ConnectorWindow : Window
         UpdateClientCertInfo(s);
         if (await LoadSnapshotAsync(s, interactive: true))
         {
-            ConnectionExpander.IsExpanded = false;
             // Nach gelungener Verbindung zurueck auf die Ansicht mit den Ergebnissen, nicht die
             // Einstellungen, die man soeben erledigt hat.
             Tabs.SelectedIndex = 0;
@@ -421,7 +516,6 @@ public partial class ConnectorWindow : Window
         var s = _ownerMain.GetSettingsSnapshot().Connector;
         if (!s.IsConfigured)
         {
-            ConnectionExpander.IsExpanded = true;
             ShowWarning(L("Bitte zuerst die Verbindung einrichten.", "Please configure the connection first."));
             return;
         }
@@ -691,7 +785,7 @@ public partial class ConnectorWindow : Window
         _lastStatus = (title, detail, statusKey, glyph);
         StatusTitle.Text = title;
         StatusDetail.Text = detail;
-        StatusGlyph.Text = FluentGlyph(glyph);
+        StatusGlyph.Glyph = FluentGlyph(glyph);
         StatusIconCircle.Background = Brush(statusKey);
         StatusBanner.Background = Brush(statusKey + "Surface");
         StatusBanner.BorderBrush = Brush(statusKey + "Border");
@@ -806,12 +900,11 @@ public partial class ConnectorWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        var icon = new TextBlock
+        var icon = new AppIcon
         {
-            Text = glyph,
-            FontFamily = FluentFont,
-            FontSize = 16,
-            Foreground = Brush(colorKey ?? "TextMuted"),
+            Glyph = glyph,
+            Size = 16,
+            Stroke = Brush(colorKey ?? "TextMuted"),
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, 1, 12, 0)
         };
@@ -896,18 +989,28 @@ public partial class ConnectorWindow : Window
         }
 
         var now = DateTime.Now;
-        PresenceGlyph.Text = presence.Glyph(now);
-        PresenceGlyph.Foreground = Brush(presence.Inserted ? "StatusOk" : "StatusOutage");
-        PresenceState.Text = presence.StateText;
-        PresenceState.Foreground = Brush(presence.Inserted ? "StatusOk" : "StatusOutage");
+        var tone = presence.Inserted ? "StatusOk" : "StatusOutage";
+        PresenceTile.Background = Brush(tone + "Surface");
+        PresenceTile.BorderBrush = Brush(tone + "Border");
+        PresenceIcon.Stroke = Brush(tone);
+        PresenceEyebrow.Text = presence.ViaEvent
+            ? L("Letzte Kartenbewegung", "Last card event")
+            : L("Gesteckte Karte", "Inserted card");
+        PresenceState.Text = presence.Headline;
 
-        var detail = presence.DetailText;
-        // Ohne Abo ist "Stand 14:32 Uhr" die einzige Erklaerung dafuer, dass die Anzeige
-        // hinterherhinkt. Wer die Herkunft nicht nennt, laesst den Nutzer raten.
-        PresenceDetail.Text = detail.Length > 0 ? detail : L("keine Einzelheit überliefert", "no detail reported");
-        PresenceAge.Text = presence.AgeText(now) + " · " + (presence.ViaEvent
-            ? L("aus Ereignis-Abo", "from event subscription")
-            : L("aus Pollabfrage", "from polling"));
+        // Statt der nackten Terminal-MAC den Namen des Terminals zeigen, sofern bekannt.
+        var terminalName = presence.CtId;
+        if (_snapshot is not null && IndexTerminals(_snapshot).TryGetValue(presence.CtId, out var terminal)
+            && !string.IsNullOrWhiteSpace(terminal.Name))
+            terminalName = terminal.Name;
+        PresenceDetail.Text = string.IsNullOrWhiteSpace(terminalName)
+            ? L("Terminal nicht gemeldet", "terminal not reported")
+            : L($"im Kartenterminal {terminalName}", $"in card terminal {terminalName}");
+        PresenceDetail.ToolTip = string.IsNullOrWhiteSpace(presence.CtId) ? null : $"CtId {presence.CtId}";
+        PresenceAge.Text = presence.AgeText(now);
+        PresenceSource.Text = presence.ViaEvent
+            ? L("per Ereignis gemeldet", "reported by event")
+            : L("aus der regelmäßigen Abfrage", "from regular polling");
         PresenceCard.Visibility = Visibility.Visible;
     }
 
@@ -1181,6 +1284,20 @@ public partial class ConnectorWindow : Window
              .ThenBy(c => c.CtId, StringComparer.OrdinalIgnoreCase)
              .ThenBy(c => c.SlotId, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Wem ein Kartenzertifikat gehoert: SMC-B und HBA nach Inhaber, die gSMC-KT nach ihrem
+    /// Kartenterminal – deren Ablauf legt das Terminal still, nicht eine Person.
+    /// </summary>
+    private (string TypeLabel, string Title, string Origin) CertificateOwner(ConnectorCard card, IReadOnlyDictionary<string, ConnectorCardTerminal> terminals)
+    {
+        var ctName = terminals.TryGetValue(card.CtId, out var ct) && !string.IsNullOrWhiteSpace(ct.Name) ? ct.Name : card.CtId;
+        if (card.IsSmcKt)
+            return ("gSMC-KT", L($"Terminal {ctName}", $"Terminal {ctName}"),
+                string.IsNullOrWhiteSpace(card.Iccsn) ? $"Slot {card.SlotId}" : $"ICCSN …{card.Iccsn[^Math.Min(6, card.Iccsn.Length)..]}");
+        var title = string.IsNullOrWhiteSpace(card.CardHolderName) ? KindOf(card) : card.CardHolderName;
+        return (KindOf(card), title, $"{ctName} · Slot {card.SlotId}");
+    }
+
     private static string KindOf(ConnectorCard card) =>
         card.IsSmcB ? "SMC-B" : card.IsHba ? "HBA" : card.IsEgk ? "eGK"
         : string.IsNullOrWhiteSpace(card.CardType) ? "KARTE" : card.CardType;
@@ -1194,54 +1311,58 @@ public partial class ConnectorWindow : Window
         var now = DateTime.Now;
         var any = false;
 
-        void AddTile(string title, DateTime notAfter)
+        // Kachel: oben Kartenart als Etikett, darunter wem die Karte gehoert und welches
+        // Zertifikat gemeint ist. Die grosse Zahl darunter ist die eigentliche Aussage.
+        void AddTile(string typeLabel, string title, string subtitle, DateTime notAfter, string glyph = "\uE8C7")
         {
             any = true;
             var daysLeft = ConnectorCertificateExpiry.DaysLeft(notAfter, now);
             var color = ConnectorCertificateExpiry.BrushKeyFor(daysLeft);
 
-            // Titel "Karte · Ref" aufteilen: oben die Art (C.AUT …), darunter wem sie gehoert.
-            var cut = title.LastIndexOf(" · ", StringComparison.Ordinal);
-            var owner = cut > 0 ? title[..cut] : title;
-            var kind = cut > 0 ? title[(cut + 3)..] : "";
-
             var body = new StackPanel();
             var head = new DockPanel();
             var iconTile = new Border
             {
-                Width = 36,
-                Height = 36,
+                Width = 38,
+                Height = 38,
                 CornerRadius = new CornerRadius(10),
                 Background = Brush(color + "Surface"),
+                BorderBrush = Brush(color + "Border"),
+                BorderThickness = new Thickness(1),
                 Margin = new Thickness(0, 0, 12, 0),
-                Child = new TextBlock
+                Child = new AppIcon
                 {
-                    Text = "\uEB95",
-                    FontFamily = FluentFont,
-                    FontSize = 16,
-                    Foreground = Brush(color),
+                    Glyph = glyph,
+                    Size = 18,
+                    Stroke = Brush(color),
                     HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center
                 }
             };
             head.Children.Add(iconTile);
+            var type = Badge(typeLabel, null, small: true);
+            type.VerticalAlignment = VerticalAlignment.Top;
+            type.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(type, Dock.Right);
+            head.Children.Add(type);
             var names = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             names.Children.Add(new TextBlock
             {
-                Text = kind.Length > 0 ? kind : owner,
+                Text = title,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush("TextMain"),
-                TextTrimming = TextTrimming.CharacterEllipsis
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                ToolTip = title
             });
-            if (kind.Length > 0)
+            if (subtitle.Length > 0)
                 names.Children.Add(new TextBlock
                 {
-                    Text = owner,
+                    Text = subtitle,
                     FontSize = 12,
                     Foreground = Brush("TextMuted"),
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                    ToolTip = owner
+                    ToolTip = subtitle
                 });
             head.Children.Add(names);
             body.Children.Add(head);
@@ -1294,20 +1415,27 @@ public partial class ConnectorWindow : Window
             CertificatesPanel.Children.Add(tile);
         }
 
+        var terminals = IndexTerminals(snapshot);
         foreach (var card in CardOrder(snapshot.Cards))
         {
-            foreach (var cert in card.Certificates)
-                AddTile($"{card.DisplayName} · {cert.CertRef}", cert.NotAfter);
+            if (!card.HasTrackedCertificate)
+                continue;
+            var (typeLabel, title, origin) = CertificateOwner(card, terminals);
+            foreach (var cert in card.Certificates.Where(c => c.NotAfter != default))
+                AddTile(typeLabel, title, $"{cert.CertRef} · {origin}", cert.NotAfter);
             // Ohne gelesene Zertifikate wenigstens das Ablaufdatum aus GetCards zeigen.
-            if (card.Certificates.Count == 0 && card.SupportsPinManagement && card.CertificateExpirationDate is { } expiry && expiry != default)
-                AddTile($"{card.DisplayName} · {L("Karte (GetCards)", "card (GetCards)")}", expiry);
+            if (card.Certificates.Count == 0 && card.CertificateExpirationDate is { } expiry && expiry != default)
+                AddTile(typeLabel, title, $"{L("Kartenzertifikat", "card certificate")} · {origin}", expiry);
         }
 
         var monitor = _ownerMain.ConnectorMonitor;
         if (monitor.ClientCertificateNotAfter is { } clientNotAfter && clientNotAfter != default)
         {
             var subject = string.IsNullOrWhiteSpace(monitor.ClientCertificateSubject) ? "P12" : monitor.ClientCertificateSubject;
-            AddTile($"{L("Clientsystem-Zertifikat", "Client system certificate")} · {subject}", clientNotAfter);
+            if (subject.StartsWith("CN=", StringComparison.OrdinalIgnoreCase))
+                subject = subject[3..].Split(',')[0];
+            AddTile(L("Clientsystem", "Client system"), subject,
+                L("TLS-Zertifikat der App (P12)", "TLS certificate of the app (P12)"), clientNotAfter, "\uEB95");
         }
 
         if (CertificatesEmpty is not null)
@@ -1321,7 +1449,7 @@ public partial class ConnectorWindow : Window
         var monitor = _ownerMain.ConnectorMonitor;
         var presence = monitor.LastPresence ?? (_snapshot is not null ? ConnectorPresence.FromSnapshot(_snapshot) : null);
         if (presence is not null)
-            EventsPresenceSummary.Text = $"{presence.Glyph(DateTime.Now)}  {presence.StateText}  {presence.DetailText}  ·  {presence.AgeText(DateTime.Now)}"
+            EventsPresenceSummary.Text = $"{presence.Headline}  ·  {presence.DetailText}  ·  {presence.AgeText(DateTime.Now)}"
                 + (string.IsNullOrWhiteSpace(monitor.LastEventNote) ? "" : "\n" + monitor.LastEventNote);
         else
             EventsPresenceSummary.Text = monitor.LastEventNote
@@ -1441,12 +1569,11 @@ public partial class ConnectorWindow : Window
             Background = toneKey is null ? Brush("ChipBackground") : Brush(toneKey + "Surface"),
             BorderBrush = toneKey is null ? Brush("BorderSubtle") : Brush(toneKey + "Border"),
             BorderThickness = new Thickness(1),
-            Child = new TextBlock
+            Child = new AppIcon
             {
-                Text = glyph,
-                FontFamily = FluentFont,
-                FontSize = size * 0.42,
-                Foreground = toneKey is null ? Brush("TextMuted") : Brush(toneKey),
+                Glyph = glyph,
+                Size = size * 0.42,
+                Stroke = toneKey is null ? Brush("TextMuted") : Brush(toneKey),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             }
@@ -1714,12 +1841,11 @@ public partial class ConnectorWindow : Window
         }
 
         var note = new DockPanel { Margin = new Thickness(0, 20, 0, 0) };
-        note.Children.Add(new TextBlock
+        note.Children.Add(new AppIcon
         {
-            Text = "\uE72E",
-            FontFamily = FluentFont,
-            FontSize = 12,
-            Foreground = Brush("TextMuted"),
+            Glyph = "\uE72E",
+            Size = 12,
+            Stroke = Brush("TextMuted"),
             Margin = new Thickness(0, 1, 8, 0),
             VerticalAlignment = VerticalAlignment.Top
         });
@@ -1771,28 +1897,46 @@ public partial class ConnectorWindow : Window
         return L("nicht verifiziert", "not verified");
     }
 
-    /// <summary>Kleines farbiges Abzeichen – flach, ohne Schatten, nur Rand und Text.</summary>
+    /// <summary>
+    /// Statusabzeichen: rechteckig mit kleinem Radius, getoente Flaeche ohne Rand, davor ein
+    /// Zustandspunkt. Neutrale Abzeichen (Kartenart, Version) kommen ohne Punkt aus und
+    /// lesen sich wie ein Etikett, nicht wie ein Knopf.
+    /// </summary>
     private Border Badge(string text, string? colorKey, bool small = false)
     {
         // TextMuted hat keine Flaechen-/Randvariante – wie "neutral" behandeln.
         if (colorKey == "TextMuted")
             colorKey = null;
-        var label = new TextBlock
+        var content = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        if (colorKey is not null)
+        {
+            var dot = small ? 6.0 : 7.0;
+            content.Children.Add(new System.Windows.Shapes.Ellipse
+            {
+                Width = dot,
+                Height = dot,
+                Fill = Brush(colorKey),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 1, small ? 5 : 7, 0)
+            });
+        }
+        content.Children.Add(new TextBlock
         {
             Text = text,
-            FontSize = small ? 10.5 : 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brush(colorKey ?? "TextMuted"),
-            TextWrapping = TextWrapping.Wrap
-        };
+            FontSize = small ? 11 : 12,
+            FontWeight = FontWeights.Medium,
+            Foreground = Brush(colorKey is null ? "TextMuted" : "TextMain"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
         return new Border
         {
-            Child = label,
+            Child = content,
             Background = colorKey is null ? Brush("ChipBackground") : Brush(colorKey + "Surface"),
-            BorderBrush = colorKey is null ? Brush("BorderSubtle") : Brush(colorKey + "Border"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(999),
-            Padding = small ? new Thickness(7, 1, 7, 2) : new Thickness(11, 4, 11, 5)
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(small ? 4 : 6),
+            Padding = small ? new Thickness(6, 2, 7, 2) : new Thickness(9, 4, 10, 4),
+            SnapsToDevicePixels = true
         };
     }
 
@@ -1827,12 +1971,11 @@ public partial class ConnectorWindow : Window
         }
 
         var name = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        name.Children.Add(new TextBlock
+        name.Children.Add(new AppIcon
         {
-            Text = "\uE8D7",
-            FontFamily = FluentFont,
-            FontSize = 13,
-            Foreground = Brush("TextMuted"),
+            Glyph = "\uE8D7",
+            Size = 13,
+            Stroke = Brush("TextMuted"),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0)
         });
@@ -2175,12 +2318,11 @@ public partial class ConnectorWindow : Window
         if (glyph is not null)
         {
             var panel = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
-            panel.Children.Add(new TextBlock
+            panel.Children.Add(new AppIcon
             {
-                Text = glyph,
-                FontFamily = FluentFont,
-                FontSize = 13,
-                Foreground = Brush("ButtonForeground"),
+                Glyph = glyph,
+                Size = 13,
+                Stroke = Brush("ButtonForeground"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0)
             });

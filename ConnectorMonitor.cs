@@ -233,6 +233,7 @@ public sealed class ConnectorMonitor : IDisposable
             ConnectorHistoryStore.UpsertNow(snapshot, DateTime.Now);
         if (settings.MonitoringEnabled && (settings.NotifyCertificateExpiry || settings.NotifyPinStatus))
             NotifyLedgerWarnings(settings, snapshot);
+        PublishToHomeAssistant(CancellationToken.None);
         Updated?.Invoke();
     }
 
@@ -395,7 +396,42 @@ public sealed class ConnectorMonitor : IDisposable
             _pollGate.Release();
         }
 
+        PublishToHomeAssistant(ct);
         Updated?.Invoke();
+    }
+
+    /// <summary>
+    /// Schickt den Stand an Home Assistant, falls eingerichtet. Laeuft neben der Ueberwachung
+    /// her – ein langsames oder nicht erreichbares Home Assistant haelt keinen Abruf auf.
+    /// </summary>
+    private void PublishToHomeAssistant(CancellationToken ct)
+    {
+        var settings = _settingsProvider().Connector;
+        if (!settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.HomeAssistantUrl))
+            return;
+        var ok = LastError is null && LastSnapshot is not null;
+        var input = new HomeAssistantInput(
+            HomeAssistantName(settings, LastSnapshot),
+            Reachable: LastError is null || LastErrorIsConfiguration,
+            Snapshot: ok ? LastSnapshot : null,
+            Alerts: ok ? LastAlerts : [],
+            ClientCertificateSubject,
+            ClientCertificateNotAfter,
+            LiveEvents: settings.EventSubscriptionsEnabled ? SubscriptionsAlive && EventStreamActive : null,
+            LastError,
+            DateTime.Now);
+        _ = Task.Run(() => HomeAssistantPublisher.PublishAsync(settings, input, ct), CancellationToken.None);
+    }
+
+    /// <summary>Anzeigename in Home Assistant: eingetragen, sonst SMC-B-Inhaber, sonst Adresse.</summary>
+    public static string HomeAssistantName(ConnectorSettings settings, ConnectorSnapshot? snapshot)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.HomeAssistantName))
+            return settings.HomeAssistantName.Trim();
+        var holder = snapshot?.Cards.FirstOrDefault(c => c.IsSmcB)?.CardHolderName;
+        if (!string.IsNullOrWhiteSpace(holder))
+            return holder.Trim();
+        return string.IsNullOrWhiteSpace(settings.Host) ? "Konnektor" : settings.Host.Trim();
     }
 
     /// <summary>

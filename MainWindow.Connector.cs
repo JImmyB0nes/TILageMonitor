@@ -216,7 +216,17 @@ public partial class MainWindow
         ConnectorCardOpenButton.Content = settings.IsConfigured
             ? LocalizationService.Pick("Öffnen", "Open")
             : LocalizationService.Pick("Einrichten", "Set up");
-        try { ConnectorCardIcon.Background = (System.Windows.Media.Brush)FindResource(iconBg); } catch { /* theme fallback */ }
+        // Getoente Flaeche, Symbol in der Zustandsfarbe – eine satte Vollfarbe mit hellem
+        // Symbol darauf wirkte wie ein Fremdkoerper neben den uebrigen Karten.
+        try
+        {
+            var isStatus = iconBg.StartsWith("Status", StringComparison.Ordinal);
+            ConnectorCardIcon.Background = (System.Windows.Media.Brush)FindResource(isStatus ? iconBg + "Surface" : iconBg);
+            ConnectorCardIcon.BorderBrush = isStatus ? (System.Windows.Media.Brush)FindResource(iconBg + "Border") : null;
+            ConnectorCardIcon.BorderThickness = new Thickness(isStatus ? 1 : 0);
+            ConnectorCardGlyph.Stroke = (System.Windows.Media.Brush)FindResource(isStatus ? iconBg : "AppIconForeground");
+        }
+        catch { /* theme fallback */ }
 
         ConnectorCardChips.Children.Clear();
         var snapNow = monitor.LastSnapshot;

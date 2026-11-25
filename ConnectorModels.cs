@@ -260,6 +260,12 @@ public sealed class ConnectorCard
         CardType.Equals("ZOD_2.0", StringComparison.OrdinalIgnoreCase) ||
         CardType.Equals("HBA-VK", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Geraetekarte des Kartenterminals (gSMC-KT). Laeuft sie ab, ist das Terminal tot.</summary>
+    public bool IsSmcKt => CardType.Equals("SMC-KT", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Karten, deren Zertifikatsablauf die App verfolgt: SMC-B, HBA und gSMC-KT.</summary>
+    public bool HasTrackedCertificate => IsSmcB || IsHba || IsHbaPredecessor || IsSmcKt;
+
     public bool IsEgk => CardType.Equals("EGK", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Institutions- und Heilberufsausweise unterstützen PIN-Verwaltung über den Konnektor.</summary>
