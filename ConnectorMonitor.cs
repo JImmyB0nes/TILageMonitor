@@ -441,6 +441,8 @@ public sealed class ConnectorMonitor : IDisposable
     private static readonly string AppVersionText =
         System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "";
 
+    private static string? _lastDerivedHaName;
+
     /// <summary>Anzeigename in Home Assistant: eingetragen, sonst SMC-B-Inhaber, sonst Adresse.</summary>
     public static string HomeAssistantName(ConnectorSettings settings, ConnectorSnapshot? snapshot)
     {
@@ -448,7 +450,11 @@ public sealed class ConnectorMonitor : IDisposable
             return settings.HomeAssistantName.Trim();
         var holder = snapshot?.Cards.FirstOrDefault(c => c.IsSmcB)?.CardHolderName;
         if (!string.IsNullOrWhiteSpace(holder))
-            return holder.Trim();
+            return _lastDerivedHaName = holder.Trim();
+        // SMC-B gerade gezogen: beim zuletzt abgeleiteten Namen bleiben, sonst entstuende in
+        // Home Assistant unter der IP ein zweites Geraet.
+        if (_lastDerivedHaName is { } last)
+            return last;
         return string.IsNullOrWhiteSpace(settings.Host) ? "Konnektor" : settings.Host.Trim();
     }
 

@@ -43,12 +43,13 @@ public sealed class MqttConnection : IAsyncDisposable
 
     public async Task ConnectAsync(CancellationToken ct)
     {
+        // Verbindungsaufbau, TLS und Anmeldung zusammen hoechstens 20 Sekunden – ein falscher
+        // Port (etwa ein Webserver) nimmt die Verbindung an, antwortet aber nie mit CONNACK.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        ct = timeout.Token;
         _tcp = new TcpClient();
-        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
-        {
-            timeout.CancelAfter(TimeSpan.FromSeconds(15));
-            await _tcp.ConnectAsync(_options.Host, _options.Port, timeout.Token);
-        }
+        await _tcp.ConnectAsync(_options.Host, _options.Port, ct);
         Stream stream = _tcp.GetStream();
         if (_options.UseTls)
         {

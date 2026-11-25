@@ -233,27 +233,27 @@ public partial class MainWindow
         void Chip(string label, bool? ok)
         {
             var color = ok is true ? "StatusOk" : ok is false ? "StatusOutage" : "StatusEmpty";
+            // Gleiche Abzeichen wie im Konnektor-Fenster: flach, kleiner Radius, getoent, ohne Rand.
             var chip = new System.Windows.Controls.Border
             {
-                Background = (System.Windows.Media.Brush)FindResource("ChipBackground"),
-                BorderBrush = (System.Windows.Media.Brush)FindResource("BorderSubtle"),
-                BorderThickness = new System.Windows.Thickness(1),
-                CornerRadius = new System.Windows.CornerRadius(10),
-                Padding = new System.Windows.Thickness(8, 4, 10, 4),
-                Margin = new System.Windows.Thickness(0, 0, 8, 6)
+                Background = (System.Windows.Media.Brush)FindResource(ok is null ? "ChipBackground" : color + "Surface"),
+                CornerRadius = new System.Windows.CornerRadius(6),
+                Padding = new System.Windows.Thickness(8, 3, 9, 3),
+                Margin = new System.Windows.Thickness(0, 0, 6, 6)
             };
             var row = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
             row.Children.Add(new System.Windows.Controls.Border
             {
-                Width = 8, Height = 8, CornerRadius = new System.Windows.CornerRadius(4),
+                Width = 7, Height = 7, CornerRadius = new System.Windows.CornerRadius(3.5),
                 Background = (System.Windows.Media.Brush)FindResource(color),
-                Margin = new System.Windows.Thickness(0, 0, 6, 0),
+                Margin = new System.Windows.Thickness(0, 1, 6, 0),
                 VerticalAlignment = System.Windows.VerticalAlignment.Center
             });
             row.Children.Add(new System.Windows.Controls.TextBlock
             {
                 Text = label,
-                FontSize = 11,
+                FontSize = 11.5,
+                FontWeight = System.Windows.FontWeights.Medium,
                 Foreground = (System.Windows.Media.Brush)FindResource("TextMain"),
                 VerticalAlignment = System.Windows.VerticalAlignment.Center
             });
