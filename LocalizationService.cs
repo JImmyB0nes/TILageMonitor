@@ -409,7 +409,7 @@ public static class LocalizationService
         ["Konnektor-Verlauf (14 Tage)"] = "Connector history (14 days)",
         ["Erreichbarkeit, VPN zur TI und zum SIS sowie gesteckte Karten – lokal aufgezeichnet bei jedem Abruf. Kachel anklicken für die Stunden."] = "Reachability, VPN to TI and SIS and inserted cards – recorded locally on every poll. Click a tile for the hours.",
         ["Noch kein Verlauf aufgezeichnet. Der Verlauf füllt sich mit jedem Abruf, solange „Verlauf lokal speichern“ in den Einstellungen aktiv ist."] = "No history recorded yet. The history fills up with every poll as long as “Store history locally” is enabled in the settings.",
-        ["C.AUT, C.ENC, C.SIG und C.QES der gesteckten Karten sowie das Clientsystem-Zertifikat. Warnstufen: 90, 30 und 7 Tage vor Ablauf."] = "C.AUT, C.ENC, C.SIG and C.QES of the inserted cards plus the client system certificate. Warning levels: 90, 30 and 7 days before expiry.",
+        ["Ablauf von SMC-B, HBA und gSMC-KT (Kartenterminal) sowie des Clientsystem-Zertifikats. Warnstufen: 90, 30 und 7 Tage vor Ablauf."] = "Expiry of SMC-B, HBA and gSMC-KT (card terminal) plus the client system certificate. Warning levels: 90, 30 and 7 days before expiry.",
         ["Konnektor-Benachrichtigungen"] = "Connector notifications",
         ["Zertifikatsablauf melden (90, 30 und 7 Tage vorher)"] = "Notify certificate expiry (90, 30 and 7 days before)",
         ["PIN-Status melden (SMC-B nicht freigeschaltet, PIN gesperrt, letzter Versuch)"] = "Notify PIN status (SMC-B not unlocked, PIN blocked, last attempt)",

@@ -93,6 +93,32 @@ public sealed class ConnectorPresence
         ? LocalizationService.Pick("rein", "in")
         : LocalizationService.Pick("raus", "out");
 
+    /// <summary>
+    /// Ganze Aussage fuer die Anzeige: "SMC-B gesteckt", "HBA gezogen", "Keine Karte gesteckt".
+    /// </summary>
+    public string Headline
+    {
+        get
+        {
+            var type = CardType switch
+            {
+                "" => null,
+                "SM-B" => "SMC-B",
+                "HBAx" or "HBA-qSig" => "HBA",
+                "EGK" => "eGK",
+                "SMC-KT" => "gSMC-KT",
+                var t => t
+            };
+            if (type is null)
+                return Inserted
+                    ? LocalizationService.Pick("Karte gesteckt", "Card inserted")
+                    : LocalizationService.Pick("Keine Karte gesteckt", "No card inserted");
+            return Inserted
+                ? LocalizationService.Pick($"{type} gesteckt", $"{type} inserted")
+                : LocalizationService.Pick($"{type} gezogen", $"{type} removed");
+        }
+    }
+
     /// <summary>Was und wo, soweit bekannt. Leer, wenn der Konnektor nichts hergibt.</summary>
     public string DetailText => string.Join(" · ", new[] { CardType, CtId }.Where(s => !string.IsNullOrWhiteSpace(s)));
 

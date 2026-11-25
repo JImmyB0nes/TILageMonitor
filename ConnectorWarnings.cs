@@ -9,7 +9,9 @@ public enum ConnectorCertificateKind
 {
     SmcB,
     Hba,
-    ClientSystem
+    ClientSystem,
+    /// <summary>Geraetekarte im Kartenterminal – am Ende der Enum, damit gespeicherte Werte gleich bleiben.</summary>
+    SmcKt
 }
 
 /// <summary>Ein Zertifikat, dessen Ablauf beobachtet wird (I/O-frei).</summary>
@@ -30,7 +32,7 @@ public sealed class ConnectorWarningLedger
 }
 
 /// <summary>
-/// Ablaufwarnung fuer SMC-B-, HBA- und Clientsystem-Zertifikate in drei Stufen (90, 30, 7
+/// Ablaufwarnung fuer SMC-B-, HBA-, gSMC-KT- und Clientsystem-Zertifikate in drei Stufen (90, 30, 7
 /// Tage) plus "abgelaufen". Jede Stufe wird je Zertifikat genau einmal gemeldet. Ein
 /// erneuertes Zertifikat (anderes Ablaufdatum) beginnt wieder von vorn.
 /// </summary>
@@ -84,6 +86,8 @@ public static class ConnectorCertificateExpiry
                 kind = ConnectorCertificateKind.SmcB;
             else if (card.IsHba || card.IsHbaPredecessor)
                 kind = ConnectorCertificateKind.Hba;
+            else if (card.IsSmcKt)
+                kind = ConnectorCertificateKind.SmcKt;
             else
                 continue;
 
@@ -100,7 +104,14 @@ public static class ConnectorCertificateExpiry
             var id = string.IsNullOrWhiteSpace(card.Iccsn) ? card.CardHandle : card.Iccsn;
             if (string.IsNullOrWhiteSpace(id))
                 continue;
-            list.Add(new ConnectorCertificateSubject($"{kind}:{id}", kind, card.DisplayName, notAfter));
+            var label = card.DisplayName;
+            if (kind == ConnectorCertificateKind.SmcKt)
+            {
+                // Die gSMC-KT gehoert zum Terminal – dessen Name sagt mehr als die Kartenart.
+                var ct = snapshot.Terminals.FirstOrDefault(t => string.Equals(t.CtId, card.CtId, StringComparison.OrdinalIgnoreCase));
+                label = LocalizationService.Pick("Terminal ", "terminal ") + (string.IsNullOrWhiteSpace(ct?.Name) ? card.CtId : ct!.Name);
+            }
+            list.Add(new ConnectorCertificateSubject($"{kind}:{id}", kind, label, notAfter));
         }
 
         if (clientNotAfter is { } clientExpiry && clientExpiry != default)
@@ -156,12 +167,16 @@ public static class ConnectorCertificateExpiry
         {
             ConnectorCertificateKind.SmcB => L($"SMC-B-Zertifikat ({subject.Label})", $"SMC-B certificate ({subject.Label})"),
             ConnectorCertificateKind.Hba => L($"HBA-Zertifikat ({subject.Label})", $"HBA certificate ({subject.Label})"),
+            ConnectorCertificateKind.SmcKt => L($"gSMC-KT-Zertifikat ({subject.Label})", $"gSMC-KT certificate ({subject.Label})"),
             _ => subject.Label
         };
         var action = subject.Kind == ConnectorCertificateKind.ClientSystem
             ? L("Neues Clientsystem-Zertifikat in der Konnektor-Administration erzeugen und in der App hinterlegen.",
                 "Create a new client system certificate in the connector administration and select it in the app.")
-            : L("Folgekarte rechtzeitig beim Kartenherausgeber bestellen.", "Order a replacement card from the card issuer in time.");
+            : subject.Kind == ConnectorCertificateKind.SmcKt
+                ? L("Neue gSMC-KT beim Terminal-Hersteller bzw. Dienstleister bestellen – ohne gültige gSMC-KT ist das Kartenterminal nicht nutzbar.",
+                    "Order a new gSMC-KT from the terminal vendor or service provider – without a valid gSMC-KT the card terminal cannot be used.")
+                : L("Folgekarte rechtzeitig beim Kartenherausgeber bestellen.", "Order a replacement card from the card issuer in time.");
 
         if (stage == ExpiredStage)
         {

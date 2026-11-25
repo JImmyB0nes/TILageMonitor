@@ -99,6 +99,17 @@ public sealed class ConnectorWarningsTests
     }
 
     [Fact]
+    public void Expiry_collects_smckt_of_card_terminal()
+    {
+        var kt = new ConnectorCard { CardType = "SMC-KT", Iccsn = "80276003600000125", CtId = "CT1", CertificateExpirationDate = Now.AddDays(20) };
+        var subjects = ConnectorCertificateExpiry.Collect(Snapshot(kt), null, null);
+
+        var subject = Assert.Single(subjects);
+        Assert.Equal(ConnectorCertificateKind.SmcKt, subject.Kind);
+        Assert.Single(ConnectorCertificateExpiry.Evaluate(subjects, new ConnectorWarningLedger(), Now));
+    }
+
+    [Fact]
     public void Expiry_collects_smcb_hba_and_client_certificate_but_not_egk()
     {
         var egk = new ConnectorCard { CardType = "EGK", Iccsn = "1", CertificateExpirationDate = Now.AddDays(3) };

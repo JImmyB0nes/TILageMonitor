@@ -124,6 +124,28 @@ public sealed class ConnectorSettings
     public bool AllowPinManagement { get; set; }
 
     /// <summary>
+    /// Home-Assistant-Anbindung: nach jedem Abruf werden Erreichbarkeit, VPN-Status und die
+    /// Zertifikatsablaeufe als Sensoren an die REST-API von Home Assistant geschickt.
+    /// </summary>
+    [JsonPropertyName("homeAssistantEnabled")]
+    public bool HomeAssistantEnabled { get; set; }
+
+    /// <summary>Basisadresse, z. B. http://homeassistant.local:8123 oder https://xyz.ui.nabu.casa</summary>
+    [JsonPropertyName("homeAssistantUrl")]
+    public string HomeAssistantUrl { get; set; } = "";
+
+    /// <summary>Long-Lived Access Token (DPAPI-geschuetzt).</summary>
+    [JsonPropertyName("homeAssistantTokenProtected")]
+    public string? HomeAssistantTokenProtected { get; set; }
+
+    /// <summary>
+    /// Name der Praxis/des Konnektors in Home Assistant. Bildet das Kuerzel der Entitaeten
+    /// (sensor.tilage_&lt;name&gt;_…) – leer: Inhaber der SMC-B bzw. Konnektor-Adresse.
+    /// </summary>
+    [JsonPropertyName("homeAssistantName")]
+    public string HomeAssistantName { get; set; } = "";
+
+    /// <summary>
     /// Schluessel der Angaben, deren Aenderung einen Neustart der Ueberwachung braucht. Alles
     /// andere (Toast-Filter, Verlauf, Karte im Hauptfenster) liest der Monitor bei
     /// jedem Abruf neu – ein Neustart wuerde nur Abos kappen und Warnungen erneut melden.

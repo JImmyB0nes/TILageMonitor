@@ -182,6 +182,11 @@ Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf,
 
 **Hintergrund-Toasts (abschaltbar):** Konnektor nicht erreichbar, TI-VPN offline, Fehlerzustände, Terminal getrennt, keine SMC-B gesteckt, Transport-PIN.
 
+**Neu (unveröffentlicht):**
+- **gSMC-KT im Blick:** die Gerätekarten der Kartenterminals erscheinen im Bereich **Zertifikate** neben SMC-B und HBA – mit Resttagen, Terminalname und Ablaufwarnung (90/30/7 Tage) samt Toast.
+- **Home-Assistant-Anbindung:** nach jedem Abruf gehen Erreichbarkeit, VPN TI/SIS, Live-Ereignisse, Karten, Terminals, SMC-B-PIN und die Restlaufzeiten von SMC-B, HBA, gSMC-KT und Clientsystem-Zertifikat als Sensoren an Home Assistant. Mehrere Praxen landen über ihren Namen getrennt in derselben Instanz (siehe unten).
+- Überarbeitete Optik: eigene Linien-Symbole statt Schrift-Glyphen, flache Statusabzeichen mit Zustandspunkt, verständlichere Anzeige der gesteckten Karte („SMC-B gesteckt · im Kartenterminal …“), Bereich **Verbindung** nicht mehr eingeklappt.
+
 **Neu in 3.2:**
 - **Neues Konnektor-Fenster** im Fluent-Stil: Kopf mit Zustand und Kennzahl-Kacheln, Navigationsleiste mit Zählern, Detailansichten mit Eigenschafts-Kacheln und PIN-Tabelle, Zertifikats-Kacheln mit Resttagen.
 - **Erinnerung an die SMC-B-Freischaltung:** nach dem Start der App (PC-Neustart) und nachdem der Konnektor wieder erreichbar ist (Stromausfall, Neustart) erscheint ein Toast, wenn die SMC-B nicht PIN-verifiziert ist – mit Knopf **„Jetzt freischalten“**, der das Konnektor-Fenster öffnet und die PIN-Eingabe am Kartenterminal startet (erfordert „PIN-Verwaltung erlauben“).
@@ -206,13 +211,55 @@ Die Hintergrundüberwachung ist **lesend** (Inventar, Status, Zertifikatsablauf,
 1. **Konnektor-Fenster öffnen** (Schaltfläche im Hauptfenster, Tray oder Einstellungen).
 2. **Adresse eintragen:** IP oder Hostname, optional mit Port (z. B. `192.168.1.10` oder `10.0.0.5:8443`). TLS (https) bleibt in der Regel eingeschaltet.
 3. **Clientzertifikat:** die `.p12`/`.pfx`-Datei des Clientsystems und das Passwort. Das Zertifikat muss in der Konnektor-Administration für dieses Clientsystem hinterlegt sein.
-4. **Aufrufkontext** aus dem Infomodell: **Mandant-ID**, **Clientsystem-ID**, **Arbeitsplatz-ID**. Die Benutzer-ID ist optional (häufig für HBA-Operationen). Laut XSD höchstens 64 Zeichen. Viele Konnektoren (insbesondere RISE) akzeptieren faktisch nur `A-Z`, `a-z`, `0-9`, `-` und `_` — Punkte oder Leerzeichen warnt die App, blockiert das Speichern aber nicht; der Konnektor kann trotzdem mit `4000 Syntaxfehler` antworten.
+4. **Aufrufkontext** aus dem Infomodell: **Mandant-ID**, **Clientsystem-ID**, **Arbeitsplatz-ID**. Die **Benutzer-ID** ist frei wählbar (z. B. das Kürzel des HBA-Inhabers) und wird nicht im Konnektor angelegt – nötig, wenn HBA-Zugriffe mit `4003 Keine User-ID angegeben` scheitern. Laut XSD höchstens 64 Zeichen. Viele Konnektoren (insbesondere RISE) akzeptieren faktisch nur `A-Z`, `a-z`, `0-9`, `-` und `_` — Punkte oder Leerzeichen warnt die App, blockiert das Speichern aber nicht; der Konnektor kann trotzdem mit `4000 Syntaxfehler` antworten.
 5. **Freigaben im Infomodell:** Clientsystem und Arbeitsplatz müssen existieren, das Clientsystem-Zertifikat muss zugeordnet sein, und der Arbeitsplatz darf die benötigten Dienste (EventService, CardService, CertificateService) nutzen.
 6. **Speichern und verbinden.** Beim ersten TLS-Handshake erscheint der Fingerprint — mit der Anzeige in der Konnektor-Administration vergleichen und nur dann **vertrauen**.
 7. **Ereignis-Abos** (optional): Die App lauscht auf einem lokalen TCP-Port ab **48150** (bei Belegung die nächsten freien Ports). Die Windows-Firewall muss eingehende Verbindungen **vom Konnektor** auf diesen Port erlauben. Die Senke akzeptiert nur die aufgelöste Konnektor-IP. Ohne Abo pollt die App im eingestellten Intervall (Standard 5 Minuten).
 8. Unter **Einstellungen** oder im Reiter **Verbindung** lassen sich Überwachung, Ereignis-Abos, lokaler Konnektor-Verlauf (14 Tage) und die Warnfrist für Zertifikate steuern.
 
 Das Diagnose-Protokoll und **Bericht kopieren** erzeugen einen Text **ohne Passwörter**.
+
+</details>
+
+<details>
+<summary><strong>Home Assistant: mehrere Konnektoren überwachen</strong></summary>
+
+1. In Home Assistant unter **Profil → Sicherheit → Langlebige Zugriffstoken** ein Token anlegen.
+2. Im Konnektor-Fenster unter **Verbindung → Home Assistant** einschalten, Adresse (z. B. `http://homeassistant.local:8123` oder die Nabu-Casa-URL) und Token eintragen, **Verbindung testen**, dann **Speichern & verbinden**.
+3. **Name der Praxis** vergeben – er bildet das Kürzel der Entitäten. Leer bleibt der Inhaber der SMC-B.
+
+Jede Praxis liefert dann u. a.:
+
+| Entität | Inhalt |
+| --- | --- |
+| `binary_sensor.tilage_<praxis>_erreichbar` | Konnektor erreichbar (`connectivity`) |
+| `binary_sensor.tilage_<praxis>_vpn_ti` / `_vpn_sis` | VPN TI / VPN SIS online |
+| `binary_sensor.tilage_<praxis>_live_ereignisse` | Ereignis-Abo aktiv |
+| `binary_sensor.tilage_<praxis>_smcb_gesteckt` | SMC-B steckt |
+| `sensor.tilage_<praxis>_status` | `ok`, `warnung`, `stoerung`, `nicht_erreichbar` |
+| `sensor.tilage_<praxis>_karten` / `_terminals` / `_betriebsfehler` | Anzahl gesteckter Karten, verbundener Terminals, aktiver Fehlerzustände |
+| `sensor.tilage_<praxis>_smcb_pin` | PIN-Zustand der SMC-B |
+| `sensor.tilage_<praxis>_smcb_<iccsn>_ablauf` | Resttage SMC-B (Attribute: `gueltig_bis`, `inhaber`, `terminal`, `iccsn`) |
+| `sensor.tilage_<praxis>_hba_<iccsn>_ablauf` | Resttage HBA |
+| `sensor.tilage_<praxis>_smckt_<iccsn>_ablauf` | Resttage gSMC-KT des Kartenterminals |
+| `sensor.tilage_<praxis>_clientsystem_ablauf` | Resttage Clientsystem-Zertifikat |
+| `sensor.tilage_<praxis>_letzter_abruf` | Zeitpunkt des letzten Abrufs |
+
+`<iccsn>` sind die letzten sechs Stellen der Kartennummer. Gezogene Karten werden auf `unavailable` gesetzt. Beispiel-Automation:
+
+```yaml
+trigger:
+  - platform: numeric_state
+    entity_id:
+      - sensor.tilage_praxis_mueller_smcb_083818_ablauf
+    below: 60
+action:
+  - service: notify.notify
+    data:
+      message: "{{ state_attr(trigger.entity_id, 'friendly_name') }}: noch {{ trigger.to_state.state }} Tage"
+```
+
+Hinweis: Die Sensoren werden über die REST-API gesetzt. Nach einem Neustart von Home Assistant erscheinen sie wieder mit dem nächsten Abruf (Intervall in den Konnektor-Einstellungen).
 
 </details>
 
